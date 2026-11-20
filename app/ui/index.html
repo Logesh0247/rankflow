@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RANKFLOW AI — Creator Studio</title>
+<style>
+:root{
+  --bg:#0a0a13; --bg2:#0d0d18; --panel:#131322; --panel2:#1a1a2e; --panel3:#20203a;
+  --border:#232338; --border2:#2e2e4a;
+  --text:#f4f4fa; --muted:#9c9cb8; --muted2:#6e6e8c;
+  --purple:#7c3aed; --purple2:#8b5cf6; --purple-dim:#4c1d95;
+  --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --blue:#38bdf8;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.5}
+a{color:var(--purple2);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+input,select{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2a2a44;border-radius:6px}
+.app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+/* ---- sidebar (reference: dark, purple accent) ---- */
+.sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:18px 12px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{padding:2px 10px 16px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.brand .logo{font-weight:800;letter-spacing:.14em;font-size:15px}
+.brand .logo span{color:var(--purple2)}
+.brand .sub{color:var(--muted2);font-size:11px;letter-spacing:.18em;margin-top:2px}
+.nav-item{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;color:var(--muted);padding:9px 12px;border-radius:9px;font-size:13.5px}
+.nav-item:hover{background:var(--panel2);color:var(--text)}
+.nav-item.active{background:linear-gradient(90deg,rgba(124,58,237,.28),rgba(124,58,237,.08));color:#fff;border-left:3px solid var(--purple2);border-radius:0 9px 9px 0}
+.nav-item .ic{width:18px;text-align:center;font-size:15px}
+.nav-item .tag{margin-left:auto;font-size:10px;color:var(--muted2)}
+.side-foot{margin-top:auto;border-top:1px solid var(--border);padding-top:12px}
+.user-chip{display:flex;align-items:center;gap:10px;padding:8px 10px}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--purple),#c026d3);display:flex;align-items:center;justify-content:center;font-weight:700}
+.user-chip .n{font-size:13px;font-weight:600}.user-chip .r{font-size:11px;color:var(--muted)}
+/* ---- main ---- */
+.main{padding:22px 26px 40px;min-width:0}
+.kicker{color:var(--purple2);font-size:11px;letter-spacing:.2em;font-weight:700;text-transform:uppercase}
+h1{font-size:34px;line-height:1.12;font-weight:800;margin:8px 0 10px}
+.lede{color:var(--muted);max-width:560px}
+.page{display:none}.page.active{display:block}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px}
+.card h3{font-size:14px;margin-bottom:4px}
+.card .sub{color:var(--muted);font-size:12.5px}
+.grid{display:grid;gap:16px}
+.btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:10px;padding:11px 18px;font-size:14px;font-weight:600}
+.btn-primary{background:linear-gradient(135deg,var(--purple),#6d28d9);color:#fff}
+.btn-primary:hover{filter:brightness(1.15)}
+.btn-ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border2)}
+.btn-danger{background:#3f1d1d;color:#fca5a5;border:1px solid #7f1d1d}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.pill.created{background:#1e293b;color:#94a3b8}.pill.running{background:#1e3a5f;color:#7dd3fc}
+.pill.awaiting_approval{background:#3b2f13;color:#fbbf24}.pill.approved{background:#14532d;color:#4ade80}
+.pill.failed{background:#450a0a;color:#f87171}.pill.cancelled{background:#262626;color:#a3a3a3}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.grey{background:var(--muted2)}
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(280px,1.05fr) minmax(320px,1.6fr) minmax(240px,.9fr);gap:16px;margin-bottom:16px;align-items:start}
+.hero-copy{display:flex;flex-direction:column;justify-content:center}
+.chips{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+.chip{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12px}
+.chip b{display:block;font-size:13px}.chip span{color:var(--muted)}
+.featured{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--border);aspect-ratio:16/9;background:#000}
+.featured img{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0}
+.featured .overlay{position:absolute;inset:auto 0 0 0;padding:18px;background:linear-gradient(transparent,rgba(0,0,0,.85))}
+.featured .tag{color:var(--purple2);font-size:11px;letter-spacing:.16em;font-weight:700}
+.featured h2{font-size:21px;margin:4px 0}
+.create-ai .tool{display:flex;gap:11px;align-items:center;width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:9px;color:var(--text);text-align:left}
+.create-ai .tool:hover{border-color:var(--purple)}
+.create-ai .tool .ic{font-size:17px}
+.create-ai .tool b{font-size:13px;display:block}.create-ai .tool span{font-size:11.5px;color:var(--muted)}
+.create-ai .tool .st{margin-left:auto;font-size:11px;font-weight:600}
+/* topic bar */
+.topic-bar{display:flex;gap:10px;margin:0 0 16px}
+.topic-bar input{flex:1;background:var(--panel);border:1px solid var(--border2);border-radius:10px;color:var(--text);padding:12px 14px;font-size:14px}
+.topic-bar input:focus{outline:2px solid var(--purple)}
+.examples{color:var(--muted);font-size:12.5px;margin:-8px 0 16px}
+.examples button{background:none;border:1px solid var(--border2);color:var(--muted);border-radius:999px;padding:4px 11px;font-size:12px;margin:2px}
+.examples button:hover{color:#fff;border-color:var(--purple)}
+/* recent projects / lists */
+.job-row{display:flex;align-items:center;gap:12px;padding:11px 6px;border-bottom:1px solid var(--border);cursor:pointer}
+.job-row:hover{background:var(--panel2);border-radius:8px}
+.job-row:last-child{border-bottom:none}
+.job-row .thumb{width:44px;height:44px;border-radius:9px;background:linear-gradient(135deg,var(--purple-dim),#312e81);display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+.job-row .t{font-weight:600;font-size:13.5px}.job-row .m{color:var(--muted);font-size:12px}
+.job-row .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+/* asset cards */
+.assets{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:16px}
+.asset{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:13px;min-height:110px;cursor:pointer}
+.asset:hover{border-color:var(--purple)}
+.asset .lab{font-size:11px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.asset .val{font-size:14px;font-weight:700;margin-top:6px;line-height:1.35}
+.asset .sub2{font-size:12px;color:var(--muted);margin-top:4px}
+/* workflow strip */
+.workflow{margin-top:16px}
+.wf-steps{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin-top:14px}
+.wf-step{padding:14px;border:1px solid var(--border);border-left:none;background:var(--panel)}
+.wf-step:first-child{border-left:1px solid var(--border);border-radius:12px 0 0 12px}
+.wf-step:last-child{border-radius:0 12px 12px 0}
+.wf-step.current{border-color:var(--purple);background:linear-gradient(180deg,rgba(124,58,237,.16),var(--panel))}
+.wf-step.done{border-color:#14532d}
+.wf-step .num{color:var(--purple2);font-weight:800;font-size:12px}
+.wf-step h4{font-size:12.5px;letter-spacing:.06em;margin:4px 0}
+.wf-step p{font-size:12px;color:var(--muted)}
+/* dashboard */
+.progress{height:10px;background:var(--panel3);border-radius:999px;overflow:hidden;margin:10px 0}
+.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--purple),var(--purple2));border-radius:999px}
+.stage-list{list-style:none}
+.stage-list li{display:flex;gap:10px;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13.5px}
+.stage-list li:last-child{border:none}
+.stage-list .st{margin-left:auto;font-size:12px;color:var(--muted)}
+.log{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0b0b16;border:1px solid var(--border);border-radius:10px;padding:12px;max-height:260px;overflow:auto;white-space:pre-wrap}
+.log .ok{color:#4ade80}.log .bad{color:#f87171}.log .mut{color:var(--muted)}
+/* review */
+.review-grid{display:grid;grid-template-columns:minmax(300px,1.1fr) minmax(300px,1fr);gap:16px}
+video{width:100%;max-height:560px;background:#000;border-radius:12px;border:1px solid var(--border)}
+.qa-issue{color:#fca5a5;font-size:13px}.qa-warn{color:#fcd34d;font-size:13px}.qa-ok{color:#4ade80;font-size:13px}
+.rank-row{display:flex;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px}
+.rank-row:last-child{border:none}.rank-row .r{font-weight:800;color:var(--purple2);width:26px}
+.rank-row .score{margin-left:auto;font-weight:700}
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--border)}
+td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:hover td{background:var(--panel2)}
+/* settings */
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.kv:last-child{border:none}.kv span{color:var(--muted)}
+.notice{background:#1c1533;border:1px solid #4c1d95;color:#d8b4fe;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:16px}
+.error-box{background:#2a1215;border:1px solid #7f1d1d;color:#fca5a5;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:16px}
+.empty{color:var(--muted);text-align:center;padding:26px 10px}
+@media (max-width:1100px){.hero{grid-template-columns:1fr}.assets{grid-template-columns:repeat(3,1fr)}.wf-steps{grid-template-columns:1fr}.wf-step{border-left:1px solid var(--border);border-radius:12px!important;margin-bottom:8px}.review-grid{grid-template-columns:1fr}}
+@media (max-width:760px){.app{grid-template-columns:1fr}.sidebar{position:fixed;z-index:20;transform:translateX(-100%);transition:transform .2s;width:236px}.sidebar.open{transform:none}.menu-btn{display:inline-flex!important}.assets{grid-template-columns:repeat(2,1fr)}.main{padding:16px}}
+.menu-btn{display:none;background:var(--panel2);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:8px 12px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="logo">RANKFLOW <span>AI</span></div><div class="sub">CREATOR STUDIO</div></div>
+    <div id="nav"></div>
+    <div class="side-foot">
+      <div class="user-chip"><div class="avatar">L</div><div><div class="n">LOGESH</div><div class="r">Creator &amp; Owner</div></div></div>
+      <div style="padding:8px 10px 0;font-size:11px;color:var(--muted2)" id="side-health">Checking backend…</div>
+    </div>
+  </aside>
+  <main class="main">
+    <button class="menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰ Menu</button>
+    <div id="banner"></div>
+
+    <!-- ============ OVERVIEW / HOME ============ -->
+    <section class="page" id="page-overview">
+      <div class="kicker">Welcome to Creator Studio</div>
+      <div class="hero">
+        <div class="hero-copy">
+          <h1>AI-powered creative production at enterprise scale</h1>
+          <p class="lede">Give RANKFLOW one topic. Seven agents discover sources, verify rights, find the five best moments, plan the countdown, render the Short and QA it — then present it for your approval.</p>
+          <div class="chips">
+            <div class="chip"><b id="stat-jobs">—</b><span>production jobs</span></div>
+            <div class="chip"><b id="stat-approved">—</b><span>approved videos</span></div>
+            <div class="chip"><b id="stat-agents">—</b><span>agents ready</span></div>
+          </div>
+        </div>
+        <div class="featured" onclick="go('review')" style="cursor:pointer">
+          <img src="poster.jpg" alt="Frame from the RANKFLOW demo render">
+          <div class="overlay"><div class="tag">FEATURED PROJECT</div><h2 id="featured-title">RANKFLOW Short — Demo Render</h2><div class="sub" style="color:#c9c9dd">Real render: 1080×1920 @ 30 fps, H.264 + AAC, 74.07 s. Click to review it.</div></div>
+        </div>
+        <div class="card create-ai">
+          <h3>Create with AI</h3><div class="sub">The seven RANKFLOW agents, live status from the backend.</div>
+          <div id="agent-tools"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Generate a video</h3><div class="sub">Topic only — no manual clip, timestamp or ranking choices.</div>
+        <div class="topic-bar" style="margin-top:12px">
+          <input id="topic-input" maxlength="200" placeholder="e.g. TOP 5 CRAZIEST PARKOUR FAILS" onkeydown="if(event.key==='Enter')generateVideo()">
+          <button class="btn btn-primary" id="generate-btn" onclick="generateVideo()">▶ Generate video</button>
+        </div>
+        <div class="examples">Try: <button onclick="setTopic(this)">TOP 5 CRAZIEST PARKOUR FAILS</button> <button onclick="setTopic(this)">Funniest cat videos</button> <button onclick="setTopic(this)">How rockets land in space</button></div>
+        <div id="generate-status"></div>
+      </div>
+
+      <div class="grid" style="grid-template-columns:1.4fr 1fr;margin-top:16px">
+        <div class="card"><h3>Recent Projects</h3><div class="sub">Latest production jobs, from the real backend.</div><div id="recent-jobs" style="margin-top:6px"></div></div>
+        <div class="card"><h3>Activity</h3><div class="sub">Real agent activity on the latest job.</div><div id="activity" style="margin-top:6px"></div></div>
+      </div>
+
+      <div class="assets" id="asset-cards"></div>
+
+      <div class="card workflow">
+        <div class="kicker">From brief to impact</div>
+        <h3 style="font-size:19px;margin-top:6px">Full Creative Production Workflows. Powered by AI.</h3>
+        <div class="sub">End-to-end workflows that help teams create, review, approve and publish high-quality content at scale. The highlighted step is where the latest job is now.</div>
+        <div class="wf-steps" id="wf-steps"></div>
+        <div class="sub" style="margin-top:10px" id="wf-note"></div>
+      </div>
+    </section>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section class="page" id="page-dashboard">
+      <div class="kicker">Production Dashboard</div>
+      <h1 id="dash-topic">No job selected</h1>
+      <div id="dash-error"></div>
+      <div class="grid" style="grid-template-columns:1.5fr 1fr">
+        <div>
+          <div class="card">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <select id="job-select" onchange="loadDashboard(this.value)" style="flex:1;background:var(--panel2);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:10px"></select>
+              <button class="btn btn-ghost" onclick="refreshDashboard()">↻ Refresh</button>
+              <button class="btn btn-ghost" id="resume-btn" onclick="resumeJob()" style="display:none">Resume job</button>
+              <button class="btn btn-danger" id="cancel-btn" onclick="cancelJob()" style="display:none">Cancel job</button>
+            </div>
+            <div style="margin-top:14px"><b id="dash-status-line">—</b><div class="progress"><i id="dash-progress" style="width:0%"></i></div><div class="sub" id="dash-progress-label">—</div></div>
+            <h3 style="margin-top:16px">Pipeline stages</h3>
+            <ul class="stage-list" id="stage-list"></ul>
+          </div>
+          <div class="card" style="margin-top:16px"><h3>Warnings &amp; QA findings</h3><div id="dash-warnings" style="margin-top:8px"></div></div>
+        </div>
+        <div>
+          <div class="card"><h3>Job</h3><div id="dash-meta" style="margin-top:8px"></div></div>
+          <div class="card" style="margin-top:16px"><h3>Agent activity</h3><div class="log" id="dash-log" style="margin-top:8px">Loading…</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ REVIEW ============ -->
+    <section class="page" id="page-review">
+      <div class="kicker">Final Video Review</div>
+      <h1 id="review-topic">No completed video yet</h1>
+      <div id="review-error"></div>
+      <div class="review-grid">
+        <div>
+          <video id="player" controls preload="metadata" poster="poster.jpg"></video>
+          <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+            <a class="btn btn-primary" id="download-btn" href="#" download>⬇ Download MP4</a>
+            <button class="btn btn-primary" id="approve-btn" onclick="approveJob()">✓ Approve</button>
+            <button class="btn btn-danger" id="reject-btn" onclick="rejectJob()">✕ Reject &amp; regenerate</button>
+          </div>
+          <div class="sub" style="margin-top:8px" id="review-note"></div>
+          <div class="card" style="margin-top:16px"><h3>Narration script</h3><div class="sub" id="review-narration" style="margin-top:6px">—</div></div>
+        </div>
+        <div>
+          <div class="card"><h3>Video details</h3><div id="review-meta" style="margin-top:8px"></div></div>
+          <div class="card" style="margin-top:16px"><h3>Quality Assurance</h3><div id="review-qa" style="margin-top:8px"></div></div>
+          <div class="card" style="margin-top:16px"><h3>Ranking — five moments, five sources</h3><div id="review-ranking" style="margin-top:8px"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY ============ -->
+    <section class="page" id="page-history">
+      <div class="kicker">Job History</div>
+      <h1>Previous productions</h1>
+      <div class="card"><table><thead><tr><th>Topic</th><th>Status</th><th>Stage</th><th>Created</th><th>Error / note</th><th></th></tr></thead><tbody id="history-body"></tbody></table></div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section class="page" id="page-settings">
+      <div class="kicker">Settings</div>
+      <h1>Configuration &amp; health</h1>
+      <div class="notice">No secrets or API keys are shown here — only whether each provider is configured.</div>
+      <div class="set-grid" id="settings-grid"></div>
+    </section>
+
+    <!-- ============ NOT IN RANKFLOW ============ -->
+    <section class="page" id="page-scope">
+      <div class="kicker">Creator Studio</div>
+      <h1 id="scope-title">Not part of RANKFLOW</h1>
+      <div class="card"><p class="sub" id="scope-body" style="font-size:14px"></p>
+      <p style="margin-top:12px"><button class="btn btn-primary" onclick="go('overview')">← Back to Overview</button></p></div>
+    </section>
+  </main>
+</div>
+<script>
+const API = new URLSearchParams(location.search).get('api') || '';
+const STAGES = ['RESEARCH','RIGHTS_VERIFICATION','VIDEO_ANALYSIS','RANKING','CREATIVE_PLANNING','VIDEO_PRODUCTION','QUALITY_ASSURANCE'];
+const STAGE_LABEL = {RESEARCH:'Research',RIGHTS_VERIFICATION:'Rights Verification',VIDEO_ANALYSIS:'Video Intelligence',RANKING:'Ranking',CREATIVE_PLANNING:'Creative Director',VIDEO_PRODUCTION:'Video Production',QUALITY_ASSURANCE:'Quality Assurance'};
+const AGENT_ICON = {research:'🔍',rights:'⚖️',video_intelligence:'🎬',ranking:'🏆',creative_director:'✍️',production:'🎥',quality_assurance:'✅'};
+const AGENT_NAME = {research:'Research',rights:'Rights Verification',video_intelligence:'Video Intelligence',ranking:'Ranking',creative_director:'Creative Director',production:'Video Production',quality_assurance:'Quality Assurance'};
+const NAV = [
+  ['overview','▦','Overview'],['history','▤','Projects'],['dashboard','◈','Campaigns'],
+  ['review','▣','Content Library'],['overview','▧','Templates'],['scope','◉','Brand Kit'],
+  ['scope','◎','Avatars'],['dashboard','↻','Workflows'],['scope','📊','Analytics'],
+  ['scope','👥','Team'],['settings','⚙','Settings'],
+];
+let jobs = [], currentJobId = null, pollTimer = null, backendOk = false;
+
+function el(id){return document.getElementById(id)}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function pill(s){return `<span class="pill ${esc(s)}">${esc(s.replaceAll('_',' '))}</span>`}
+function timeAgo(d){const s=(Date.now()-new Date(d).getTime())/1000;if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
+async function api(path, opts={}){
+  const r = await fetch(API+path, opts);
+  const t = await r.text();
+  let j=null; try{j=JSON.parse(t)}catch(e){}
+  if(!r.ok) throw new Error((j&&j.detail)||(j&&j.message)||t||('HTTP '+r.status));
+  return j;
+}
+function banner(html, kind){
+  el('banner').innerHTML = html ? `<div class="${kind==='err'?'error-box':'notice'}">${html}</div>` : '';
+}
+function go(page, arg){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const map={overview:'overview',dashboard:'dashboard',review:'review',history:'history',settings:'settings',scope:'scope'};
+  el('page-'+(map[page]||'overview')).classList.add('active');
+  // Activate exactly one nav item: for overview only the Overview
+  // button (Templates also opens Overview), for scope the button
+  // whose label matches the requested section.
+  document.querySelectorAll('.nav-item').forEach(n=>{
+    if(n.dataset.page!==page) return;
+    if(page==='overview' && n.dataset.label!=='Overview') return;
+    if(page==='scope' && arg && n.dataset.label!==arg) return;
+    n.classList.add('active');
+  });
+  document.getElementById('sidebar').classList.remove('open');
+  if(page==='overview') loadOverview();
+  if(page==='dashboard') loadDashboard(arg||currentJobId);
+  if(page==='review') loadReview(arg);
+  if(page==='history') loadHistory();
+  if(page==='settings') loadSettings();
+  if(page==='scope') showScope(arg);
+  window.scrollTo(0,0);
+}
+function showScope(which){
+  const msgs={
+    'Brand Kit':'RANKFLOW has no brand kit — videos use the countdown template (1080×1920, bottom-third captions, purple rank labels) set by the Creative Director.',
+    'Avatars':'RANKFLOW has no avatar studio — narration is a voiceover script, and there is no TTS voice configured yet, so renders currently carry a silent narration track.',
+    'Analytics':'RANKFLOW has no analytics yet — Prompt 12 (Optimization & Deployment) adds performance tracking. For now, Job History and QA reports are the record.',
+    'Team':'RANKFLOW is a single-user system — jobs are requested by one owner (LOGESH). There is no team activity feed; the Activity panel shows real agent logs instead.',
+    'Templates':'RANKFLOW has no saved templates — every job starts from a topic you type. The example topics on Overview are just starting points.'};
+  el('scope-title').textContent = which||'Not part of RANKFLOW';
+  el('scope-body').textContent = msgs[which]||'This section is not part of RANKFLOW AI.';
+}
+
+/* ---------- overview ---------- */
+async function loadOverview(){
+  try{
+    jobs = await api('/jobs');
+    el('stat-jobs').textContent = jobs.length;
+    el('stat-approved').textContent = jobs.filter(j=>j.status==='approved').length;
+    const agents = await api('/agents');
+    el('stat-agents').textContent = agents.filter(a=>a.status==='ready').length + ' / ' + agents.length;
+    el('agent-tools').innerHTML = agents.map(a=>`<button class="tool" onclick="go('dashboard')"><span class="ic">${AGENT_ICON[a.agent_id]||'⚙️'}</span><span><b>${esc(AGENT_NAME[a.agent_id]||a.name)}</b><span>${esc(a.description||'')}</span></span><span class="st" style="color:${a.status==='ready'?'#4ade80':'#fbbf24'}">${a.status==='ready'?'● ready':'● '+esc(a.status)}</span></button>`).join('');
+    const recent = jobs.slice(0,5);
+    el('recent-jobs').innerHTML = recent.length ? recent.map(j=>`<div class="job-row" onclick="go('dashboard','${j.id}')"><div class="thumb">▶</div><div><div class="t">${esc(j.topic)}</div><div class="m">${timeAgo(j.created_at)} · ${esc(j.current_stage||'')}</div></div><div class="right">${pill(j.status)}</div></div>`).join('') : '<div class="empty">No jobs yet — generate your first video above.</div>';
+    const latest = jobs[0];
+    if(latest){
+      try{ const h = await api(`/jobs/${latest.id}/history`); el('activity').innerHTML = h.slice(-6).reverse().map(e=>`<div class="job-row" style="cursor:default"><div class="thumb" style="font-size:13px">${e.status==='succeeded'?'✓':e.status==='failed'?'✕':'•'}</div><div><div class="t">${esc(e.stage||e.event)} — ${esc(e.status)}</div><div class="m">${esc(e.detail||'')}</div></div></div>`).join('') || '<div class="empty">No agent activity recorded yet.</div>';
+      }catch(e){ el('activity').innerHTML = '<div class="empty">Activity unavailable.</div>'; }
+      buildAssets(latest); buildWorkflow(latest);
+    } else { el('activity').innerHTML='<div class="empty">No jobs yet.</div>'; el('asset-cards').innerHTML=''; el('wf-steps').innerHTML=''; }
+  }catch(e){ banner('Backend unreachable: '+esc(e.message)+' — start it with <code>uvicorn main:app --port 8000</code> in ~/workspace/rankflow_ai.','err'); }
+}
+async function buildAssets(job){
+  const cards=[['Hook','—','—'],['Top Moment','—','—'],['Video','—','—'],['Narration','—','—'],['QA Verdict','—','—']];
+  try{ const sb = await api(`/jobs/${job.id}/storyboard`); cards[0]=['Hook', sb.hook||'—', 'Creative Director']; }catch(e){}
+  try{ const rk = await api(`/jobs/${job.id}/ranking`); if(rk.length){ const top=rk.find(r=>r.rank===1)||rk[0]; const tot = top.score_breakdown?.total ?? Math.round((top.score||0)*100); cards[1]=['Top Moment','#1 · '+tot+'/100', (top.reason||'').slice(0,60)]; } }catch(e){}
+  try{ const rv = await api(`/jobs/${job.id}/rendered-video`); cards[2]=['Video', `${rv.width}×${rv.height}`, `${rv.duration_seconds??'—'} s · ${rv.status}`]; }catch(e){}
+  try{ const nr = await api(`/jobs/${job.id}/narration`); const w=(nr.script_text||'').split(/\s+/).filter(Boolean).length; cards[3]=['Narration', w+' words', 'script · '+(nr.status||'draft')]; }catch(e){}
+  try{ const qa = await api(`/jobs/${job.id}/qa`); cards[4]=['QA Verdict', qa.verdict||'—', (qa.issues||[]).length+' issues · '+(qa.warnings||[]).length+' warnings']; }catch(e){}
+  el('asset-cards').innerHTML = cards.map(c=>`<div class="asset" onclick="go('review','${job.id}')"><div class="lab">${c[0]}</div><div class="val">${esc(c[1])}</div><div class="sub2">${esc(c[2])}</div></div>`).join('');
+}
+function buildWorkflow(job){
+  const steps=[['01','BRIEF & PLAN','Capture the brief, define objectives, audience, and key messages.'],['02','CREATE & GENERATE','Use the best AI models to generate on-brand content at scale.'],['03','REVIEW & APPROVE','Collaborate in real time. Get feedback, refine, and approve with confidence.'],['04','PUBLISH & DISTRIBUTE','Publish to all channels and formats. Personalise and localise at scale.'],['05','MEASURE & OPTIMISE','Track performance, learn what works, and optimise continuously.']];
+  const idx = job.current_stage==='COMPLETED'||job.status==='awaiting_approval'||job.status==='approved' ? 3 : STAGES.indexOf(job.current_stage);
+  el('wf-steps').innerHTML = steps.map((s,i)=>{const cls = i<idx?'done':i===idx?'current':'';return `<div class="wf-step ${cls}"><div class="num">${s[0]}</div><h4>${s[1]}</h4><p>${s[2]}</p></div>`}).join('');
+  el('wf-note').textContent = job.status==='approved' ? 'This job is approved. Publishing is manual — RANKFLOW does not auto-publish (Prompt 12 covers deployment).'
+    : job.status==='awaiting_approval' ? 'Latest job is awaiting your approval — open Final Video Review to watch, approve, or reject & regenerate.'
+    : job.status==='failed' ? 'Latest job failed: '+(job.error_message||'see dashboard')+' — resume it from the dashboard after fixing the cause.'
+    : 'Latest job is at stage '+(job.current_stage||'—')+'.';
+}
+
+/* ---------- generate ---------- */
+function setTopic(btn){ el('topic-input').value = btn.textContent; }
+async function generateVideo(){
+  const topic = el('topic-input').value.trim();
+  if(!topic){ el('generate-status').innerHTML='<div class="error-box">Enter a topic first.</div>'; return; }
+  el('generate-btn').disabled = true;
+  el('generate-status').innerHTML = '<div class="notice">Creating job…</div>';
+  try{
+    const job = await api('/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic})});
+    currentJobId = job.id;
+    el('generate-status').innerHTML = `<div class="notice">Job created — running the full pipeline (research → rights → analysis → ranking → creative → render → QA). This takes several minutes; progress is live on the <a href="#" onclick="go('dashboard','${job.id}');return false">Production Dashboard</a>.</div>`;
+    go('dashboard', job.id);
+    api(`/jobs/${job.id}/run`,{method:'POST'}).then(()=>{ loadDashboard(job.id); loadOverview(); }).catch(e=>{ el('dash-error').innerHTML='<div class="error-box">Run failed: '+esc(e.message)+'</div>'; loadDashboard(job.id); });
+  }catch(e){ el('generate-status').innerHTML='<div class="error-box">'+esc(e.message)+'</div>'; }
+  el('generate-btn').disabled = false;
+}
+
+/* ---------- dashboard ---------- */
+async function loadDashboard(jobId){
+  try{
+    jobs = await api('/jobs');
+    const sel = el('job-select');
+    sel.innerHTML = jobs.map(j=>`<option value="${j.id}" ${j.id===jobId?'selected':''}>${esc(j.topic)} — ${esc(j.status)}</option>`).join('') || '<option value="">No jobs yet</option>';
+    if(!jobId){ el('dash-topic').textContent='No job selected'; el('stage-list').innerHTML='<div class="empty">Create a job from Overview first.</div>'; return; }
+    currentJobId = jobId;
+    const job = jobs.find(j=>j.id===jobId) || await api(`/jobs/${jobId}`);
+    el('dash-topic').textContent = job.topic;
+    const idx = STAGES.indexOf(job.current_stage);
+    const done = job.status==='awaiting_approval'||job.status==='approved' ? 7 : job.status==='failed' ? Math.max(0,idx) : (idx<0?0:idx);
+    const pct = job.status==='awaiting_approval'||job.status==='approved' ? 100 : Math.round(done/7*100);
+    el('dash-progress').style.width = pct+'%';
+    el('dash-progress-label').textContent = pct+'% — '+(job.current_stage||'');
+    el('dash-status-line').innerHTML = pill(job.status)+' <span style="color:var(--muted);font-weight:400">Active agent: '+esc(job.status==='running'? (STAGE_LABEL[job.current_stage]||job.current_stage) : job.status==='awaiting_approval'?'Quality Assurance (done — awaiting you)': job.current_stage||'—')+'</span>';
+    el('dash-meta').innerHTML = `<div class="kv"><span>Job ID</span><b style="font-size:11px">${esc(job.id)}</b></div><div class="kv"><span>Status</span>${pill(job.status)}</div><div class="kv"><span>Current stage</span><b>${esc(job.current_stage||'—')}</b></div><div class="kv"><span>Created</span><b>${new Date(job.created_at).toLocaleString()}</b></div><div class="kv"><span>Updated</span><b>${new Date(job.updated_at).toLocaleString()}</b></div>${job.error_message?`<div class="kv"><span>Error</span><b style="color:#f87171">${esc(job.error_message)}</b></div>`:''}`;
+    el('stage-list').innerHTML = STAGES.map((s,i)=>{
+      let st='pending', mark='○';
+      if(job.status==='awaiting_approval'||job.status==='approved'){st='done';mark='✓'}
+      else if(job.status==='failed' && i===idx){st='failed';mark='✕'}
+      else if(i<idx||(job.status==='failed'&&i<idx)){st='done';mark='✓'}
+      else if(i===idx&&job.status==='running'){st='active';mark='◐'}
+      const color = st==='done'?'#4ade80':st==='failed'?'#f87171':st==='active'?'#7dd3fc':'var(--muted)';
+      return `<li><span style="color:${color}">${mark}</span>${STAGE_LABEL[s]}<span class="st">${st}</span></li>`}).join('');
+    el('resume-btn').style.display = job.status==='failed'?'':'none';
+    el('cancel-btn').style.display = (job.status==='running'||job.status==='created')?'':'none';
+    try{
+      const h = await api(`/jobs/${jobId}/history`);
+      el('dash-log').innerHTML = h.map(e=>`<div><span class="${e.status==='succeeded'?'ok':e.status==='failed'?'bad':'mut'}">[${esc(e.status)}]</span> ${esc(e.stage||e.event)} — ${esc(e.detail||'')}</div>`).join('') || 'No activity yet.';
+    }catch(e){ el('dash-log').textContent='Activity unavailable.'; }
+    try{
+      const qa = await api(`/jobs/${jobId}/qa`);
+      el('dash-warnings').innerHTML = `<div class="kv"><span>QA verdict</span><b>${esc(qa.verdict||'—')}</b></div>` +
+        (qa.issues||[]).map(i=>`<div class="qa-issue">✕ ${esc(i)}</div>`).join('') +
+        (qa.warnings||[]).map(w=>`<div class="qa-warn">⚠ ${esc(w)}</div>`).join('') +
+        ((qa.not_tested||[]).length?`<div class="sub" style="margin-top:6px">Not tested (no vision model / OCR): ${esc(qa.not_tested.join(', '))}</div>`:'') || '<div class="empty">No QA report yet.</div>';
+    }catch(e){ el('dash-warnings').innerHTML = '<div class="empty">No QA report yet — QA runs after the render.</div>'; }
+    clearInterval(pollTimer);
+    if(job.status==='running'||job.status==='created'){ pollTimer = setInterval(()=>{ if(el('page-dashboard').classList.contains('active')) loadDashboard(currentJobId); }, 4000); }
+  }catch(e){ el('dash-error').innerHTML='<div class="error-box">'+esc(e.message)+'</div>'; }
+}
+function refreshDashboard(){ loadDashboard(currentJobId); }
+async function resumeJob(){
+  if(!currentJobId) return;
+  el('dash-error').innerHTML='<div class="notice">Resuming…</div>';
+  try{ await api(`/jobs/${currentJobId}/resume`,{method:'POST'}); loadDashboard(currentJobId); }
+  catch(e){ el('dash-error').innerHTML='<div class="error-box">Resume failed: '+esc(e.message)+'</div>'; }
+}
+async function cancelJob(){
+  if(!currentJobId) return;
+  try{ await api(`/jobs/${currentJobId}/cancel`,{method:'POST'}); loadDashboard(currentJobId); }
+  catch(e){ el('dash-error').innerHTML='<div class="error-box">Cancel failed: '+esc(e.message)+'</div>'; }
+}
+
+/* ---------- review ---------- */
+async function loadReview(jobId){
+  try{
+    jobs = await api('/jobs');
+    const done = jobs.filter(j=>j.status==='awaiting_approval'||j.status==='approved');
+    const job = (jobId && jobs.find(j=>j.id===jobId)) || done[0] || jobs[0];
+    if(!job){ el('review-topic').textContent='No completed video yet'; el('review-error').innerHTML='<div class="notice">Generate a video from Overview first — the finished Short appears here for review.</div>'; return; }
+    currentJobId = job.id;
+    el('review-topic').textContent = job.topic;
+    el('review-note').textContent = job.status==='approved' ? 'This video is approved.' : job.status==='awaiting_approval' ? 'Awaiting your approval — watch it, then approve, or reject to regenerate it.' : 'This job has not finished yet — the video appears here once it reaches awaiting approval. See the dashboard for progress.';
+    const dl = API+`/jobs/${job.id}/rendered-video/download`;
+    el('download-btn').href = dl;
+    el('approve-btn').style.display = job.status==='awaiting_approval'?'':'none';
+    el('reject-btn').style.display = job.status==='awaiting_approval'?'':'none';
+    try{
+      const rv = await api(`/jobs/${job.id}/rendered-video`);
+      el('player').src = dl;
+      el('review-meta').innerHTML = `<div class="kv"><span>Status</span>${pill(job.status)}</div><div class="kv"><span>Duration</span><b>${rv.duration_seconds??'—'} s</b></div><div class="kv"><span>Resolution</span><b>${rv.width}×${rv.height}</b></div><div class="kv"><span>Render status</span><b>${esc(rv.status)}</b></div><div class="kv"><span>Job</span><b style="font-size:11px">${esc(job.id)}</b></div>`;
+    }catch(e){ el('player').removeAttribute('src'); el('review-meta').innerHTML = `<div class="empty">No rendered video yet for this job.</div>`; }
+    try{
+      const qa = await api(`/jobs/${job.id}/qa`);
+      el('review-qa').innerHTML = `<div class="kv"><span>Verdict</span><b>${esc(qa.verdict||'—')} (${esc(qa.status||'')})</b></div>` +
+        (qa.issues||[]).map(i=>`<div class="qa-issue">✕ ${esc(i)}</div>`).join('') +
+        (qa.warnings||[]).map(w=>`<div class="qa-warn">⚠ ${esc(w)}</div>`).join('') +
+        ((qa.not_tested||[]).length?`<div class="sub" style="margin-top:6px">Not tested: ${esc(qa.not_tested.join(', '))}</div>`:'') +
+        ((qa.recommendations||[]).length?`<div class="sub" style="margin-top:6px">Recommendations: ${esc(qa.recommendations.join(' · '))}</div>`:'');
+    }catch(e){ el('review-qa').innerHTML='<div class="empty">No QA report yet.</div>'; }
+    try{
+      const rk = await api(`/jobs/${job.id}/ranking`);
+      el('review-ranking').innerHTML = rk.length ? rk.slice().sort((a,b)=>a.rank-b.rank).map(r=>{const tot = r.score_breakdown?.total ?? Math.round((r.score||0)*100);return `<div class="rank-row"><span class="r">#${r.rank}</span><span>${esc(r.reason||r.moment_id||'')}</span><span class="score">${tot}/100</span></div>`}).join('') : '<div class="empty">No ranking yet.</div>';
+    }catch(e){ el('review-ranking').innerHTML='<div class="empty">No ranking yet.</div>'; }
+    try{
+      const nr = await api(`/jobs/${job.id}/narration`);
+      el('review-narration').textContent = nr.script_text||'—';
+    }catch(e){ el('review-narration').textContent='—'; }
+  }catch(e){ el('review-error').innerHTML='<div class="error-box">'+esc(e.message)+'</div>'; }
+}
+async function approveJob(){
+  if(!currentJobId) return;
+  try{ await api(`/jobs/${currentJobId}/approve`,{method:'POST'}); banner('Video approved. Publishing is manual — RANKFLOW does not auto-publish.'); loadReview(currentJobId); }
+  catch(e){ el('review-error').innerHTML='<div class="error-box">Approve failed: '+esc(e.message)+'</div>'; }
+}
+async function rejectJob(){
+  if(!currentJobId) return;
+  if(!confirm('Reject this video and regenerate it from the approved EDL?')) return;
+  el('review-error').innerHTML='<div class="notice">Regenerating — re-rendering and re-running QA. This takes a few minutes; watch progress on the dashboard.</div>';
+  try{ await api(`/jobs/${currentJobId}/reject`,{method:'POST'}); banner('Regeneration finished — the new render is ready for review.'); loadReview(currentJobId); }
+  catch(e){ el('review-error').innerHTML='<div class="error-box">Regenerate failed: '+esc(e.message)+'</div>'; }
+}
+
+/* ---------- history ---------- */
+async function loadHistory(){
+  try{
+    jobs = await api('/jobs');
+    el('history-body').innerHTML = jobs.length ? jobs.map(j=>`<tr><td><b>${esc(j.topic)}</b><br><span style="color:var(--muted);font-size:11px">${esc(j.id)}</span></td><td>${pill(j.status)}</td><td>${esc(j.current_stage||'—')}</td><td>${new Date(j.created_at).toLocaleString()}</td><td style="color:#f87171">${esc(j.error_message||'')}</td><td><button class="btn btn-ghost" style="padding:6px 12px" onclick="go('dashboard','${j.id}')">Open</button></td></tr>`).join('') : '<tr><td colspan="6"><div class="empty">No jobs yet.</div></td></tr>';
+  }catch(e){ el('history-body').innerHTML='<tr><td colspan="6"><div class="error-box">'+esc(e.message)+'</div></td></tr>'; }
+}
+
+/* ---------- settings ---------- */
+async function loadSettings(){
+  try{
+    const s = await api('/settings/status');
+    const h = await api('/health');
+    const sec = (label, rows)=>`<div class="card"><h3>${label}</h3><div style="margin-top:6px">${rows}</div></div>`;
+    const kv=(k,v,ok)=>`<div class="kv"><span>${k}</span><b>${ok===undefined?esc(String(v)):''}<span class="dot ${ok===true?'green':ok===false?'red':'grey'}"></span> ${ok===undefined?'':(ok?'Yes':'No')}</b></div>`;
+    el('settings-grid').innerHTML =
+      sec('AI providers', kv('Research provider', s.research_provider) + kv('YouTube API', '', s.youtube_configured) + kv('TTS provider', s.tts_provider, s.tts_configured) + `<div class="kv"><span>Note</span><b style="color:var(--muted);font-weight:400">No TTS voice — renders are silent</b></div>`) +
+      sec('Audio', kv('Licensed music library', '', s.music_library_configured) + kv('Licensed SFX library', '', s.sfx_library_configured) + `<div class="kv"><span>Note</span><b style="color:var(--muted);font-weight:400">No music/SFX until a licensed library is configured</b></div>`) +
+      sec('Video output', `<div class="kv"><span>Resolution</span><b>${s.video_output.width}×${s.video_output.height}</b></div><div class="kv"><span>Frame rate</span><b>${s.video_output.fps} fps</b></div><div class="kv"><span>Codecs</span><b>${s.video_output.video_codec} + ${s.video_output.audio_codec}</b></div><div class="kv"><span>CRF / preset</span><b>${s.video_output.crf} / ${esc(s.video_output.preset)}</b></div><div class="kv"><span>Target duration</span><b>${s.video_output.target_duration_seconds} s</b></div>`) +
+      sec('Storage', kv('Backend', s.storage_backend) + kv('Storage folder exists', '', s.storage_root_exists) + `<div class="kv"><span>Free disk</span><b>${s.storage_free_gb??'—'} GB</b></div>`) +
+      sec('API health', `<div class="kv"><span>Backend</span><b>${esc(h.status)} · DB ${h.database_ok?'ok':'down'} · FFmpeg ${h.ffmpeg_ok?'ok':'missing'}</b></div>` + (s.agents||[]).map(a=>`<div class="kv"><span>${esc(a.name||a.id)}</span><b><span class="dot ${a.status==='ready'?'green':'amber'}"></span> ${esc(a.status)}</b></div>`).join('')) +
+      sec('Narration & QA', `<div class="kv"><span>Generator</span><b>${esc(s.narration.generator)}</b></div><div class="kv"><span>Speech rate</span><b>${s.narration.words_per_minute} wpm</b></div><div class="kv"><span>QA repair attempts</span><b>${s.qa.max_repair_attempts}</b></div>`);
+  }catch(e){ el('settings-grid').innerHTML='<div class="error-box">'+esc(e.message)+'</div>'; }
+}
+
+/* ---------- boot ---------- */
+(function init(){
+  el('nav').innerHTML = NAV.map(n=>`<button class="nav-item" data-page="${n[0]}" data-label="${n[2]}" onclick="go('${n[0]}'${n[2]==='Brand Kit'||n[2]==='Avatars'||n[2]==='Analytics'||n[2]==='Team'||n[2]==='Templates'?`, '${n[2]}'`:''})"><span class="ic">${n[1]}</span>${n[2]}</button>`).join('');
+  api('/health').then(h=>{ backendOk=true; el('side-health').innerHTML = `<span class="dot green"></span> Backend ${esc(h.status)} · DB ${h.database_ok?'ok':'down'} · FFmpeg ${h.ffmpeg_ok?'ok':'missing'}`; })
+    .catch(()=>{ el('side-health').innerHTML = '<span class="dot red"></span> Backend unreachable'; });
+  go('overview');
+})();
+</script>
+</body>
+</html>

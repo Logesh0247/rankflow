@@ -1,0 +1,32 @@
+# RANKFLOW AI — Render deployment (one-click via render.yaml).
+#
+# Deploy: open https://render.com/deploy?repo=https://github.com/Logesh0247/rankflow-ai
+# and Render builds this Dockerfile and runs it. No code changes needed.
+#
+# Notes, read before relying on the free plan:
+# - Render injects $PORT; the Dockerfile binds to it (default 8000 locally).
+# - Free plan: 512 MB RAM, spins down after 15 min idle (first request
+#   after that takes ~1 min to wake). FFmpeg renders are CPU-bound, so a
+#   ~40 s Short takes several minutes on the free instance.
+# - Free plan has an ephemeral filesystem: the SQLite DB, renders and
+#   backups in /app/data are LOST on every restart/redeploy. For data
+#   that survives restarts, use a paid plan with a persistent disk
+#   (add `disk:` below) or set DATABASE_URL to a managed PostgreSQL.
+# - This service has no login of its own. Keep the URL private, or put
+#   it behind authentication before sharing it.
+services:
+  - type: web
+    name: rankflow-ai
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        value: sqlite:////app/data/rankflow.db
+      - key: STORAGE_ROOT
+        value: /app/data/storage
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
