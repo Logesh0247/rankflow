@@ -8,26 +8,40 @@ Flow for one job:
      NOT downloaded: no download step is configured)
   -> probe every source, measure the motion centroid for
      subject-aware reframing, extract each clip at its verified
-     timestamps, reframe to 1080x1920, burn in countdown graphics,
-     captions and attribution, render intro/outro cards
-  -> join the segments and re-encode to the final MP4
+     timestamps, reframe to 1080x1920 full-bleed, burn in the
+     title bar, numbered list, captions and attribution, then
+     join the five clips with straight cuts (no intro/outro
+     cards, no black transition gaps)
   -> validate the render with ffprobe + a full decode check
   -> persist the RenderedVideo row and a render manifest.
 
+Full-bleed style (2026-11-21, replacing the Rankter style):
+the clip fills the whole 1080x1920 frame; the title bar, the
+1-5 numbers down the left edge and the captions are drawn on
+top of the footage. The voiceover is OFF for this style — the
+reference videos carry the text on screen, not as narration —
+so no TTS synthesis runs (the Edge TTS code is intact, just
+not called in this style path); the narration script exists
+and the captions carry it, but no voice is claimed.
+
 What is NOT in the render, recorded honestly in the manifest:
-* narration audio — generated with Edge TTS by default (free, no
-  API key). If synthesis fails at runtime (endpoint down,
-  rate-limited, or blocked by the network — live synthesis is
-  unverified on this machine), the audio track is silence and the
-  manifest records the failure reason (status
-  ``generation_failed``); the narration script exists and the
-  captions carry it, but no voice is claimed (see narration.py);
+* narration audio — voiceover is off by design in the
+  full-bleed style (see above); the manifest records status
+  ``not_generated_voiceover_off_fullbleed_style``;
 * licensed music — only mixed in when PROD_MUSIC_DIR holds a
   licensed file that probes as audio; otherwise none, and the
   manifest says so;
 * sound effects — detected when configured, but SFX mixing is
   not implemented in this prompt, so none are mixed in; the
   manifest says so.
+
+Attribution: there is no end-credits screen in the video
+itself. A clip whose licence requires attribution gets a small
+attribution line in the lower third for the last 2 seconds of
+its segment, and the full attribution for every clip is
+recorded in the manifest and in the report's
+``description_attribution`` (paste it into the video
+description when publishing).
 
 Failure handling (never silent, never fabricated):
 * no EDL / fewer than five clips / wrong order / timestamps that
@@ -63,17 +77,13 @@ from app.agents.production.audio import (
     AudioAsset, ducking_status, find_music, find_sfx,
 )
 from app.agents.production.captions import ass_filter, build_ass
-from app.agents.production.extract import (
-    ExtractedClip, extract_clip, render_silent_segment,
-)
+from app.agents.production.extract import ExtractedClip, extract_clip
 from app.agents.production.graphics import (
-    RANKTER_BG, RANKTER_VIDEO_AREA_HEIGHT, TARGET_WIDTH,
-    card_graphics_filters, clip_graphics_filters, fade_filters,
-    rankter_list_filters, rankter_list_label, rankter_title_filters,
+    TARGET_WIDTH, clean_clip_caption, clip_graphics_filters,
 )
 from app.agents.production.narration import (
     NarrationAudio, NarrationProvider, detect_narration_provider,
-    generate_narration_audio, narration_estimated_seconds,
+    narration_estimated_seconds,
 )
 from app.agents.production.reframe import motion_centroid_x
 from app.agents.production.render import (
@@ -82,7 +92,6 @@ from app.agents.production.render import (
 from app.agents.rights.gate import require_approved
 from app.agents.video_intelligence.probe import probe_video
 from app.core.config import Settings, get_settings
-from app.core.cost import CostService
 from app.core.errors import ExternalServiceError, NotFoundError, ValidationError
 from app.models.models import (
     AnalyzedMoment, ApprovedFootage, EditInstruction, RenderedVideo,
@@ -131,6 +140,10 @@ class ProductionReport(BaseModel):
     ducking: str = "not_applicable"
     captions: dict = Field(default_factory=dict)
     attributions: list[dict] = Field(default_factory=list)
+    # Full attribution text for the video description (the video
+    # itself has no end-credits screen): one line per clip whose
+    # licence requires attribution, joined with "; ".
+    description_attribution: str = ""
     validation: dict = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -170,37 +183,21 @@ class ProductionService:
         narration_provider = detect_narration_provider(self.settings)
         narration_seconds = narration_estimated_seconds(
             narration_script, words_per_minute=float(self.settings.cd_narration_wpm))
-        if narration_seconds > total_duration + 2.0:
-            raise ExternalServiceError(
-                f"narration is {narration_seconds:.1f}s but the timeline is only "
-                f"{total_duration:.1f}s — the voiceover cannot fit the video")
-
-        # Phase 4: synthesise the narration voice with Edge TTS.
-        # FAIL-SOFT by design: a synthesis failure (endpoint down,
-        # rate-limited, or — on this machine — the network proxy
-        # blocking speech.platform.bing.com) never hard-fails the
-        # job. The render falls back to a silent narration track,
-        # the failure reason is recorded in the manifest, and QA
-        # reports needs_review instead of pass.
+        # Full-bleed style: the voiceover is OFF by design — the
+        # reference videos carry the text on screen, not as
+        # narration. No TTS synthesis runs at all (the Edge TTS
+        # code is intact, just not called in this style path), so
+        # there is no fit check against the timeline and no
+        # synthesis failure to fall back from. The narration
+        # script exists and the captions carry it; QA will flag
+        # the missing voice as needs_review, which is the honest
+        # verdict for a voiceless render.
         narration_audio: NarrationAudio | None = None
         narration_failure: str | None = None
-        synthesis_warnings: list[str] = []
-        if narration_provider.status == "edge_tts":
-            try:
-                narration_audio = generate_narration_audio(
-                    narration_script, work_dir / "narration.mp3", self.settings)
-                try:
-                    CostService(self._engine, self.settings).record_tts(
-                        job.id, chars=len(narration_script),
-                        label="edge-tts narration (free, no API key)")
-                except Exception:  # noqa: BLE001 — cost recording never breaks a job
-                    pass
-            except Exception as exc:  # noqa: BLE001 — any synthesis failure is fail-soft
-                narration_failure = str(exc)
-                synthesis_warnings = [f"narration synthesis failed — rendering with a "
-                                      f"silent narration track: {narration_failure}"]
-        else:
-            synthesis_warnings = []
+        synthesis_warnings: list[str] = [
+            "voiceover is off in the full-bleed style — rendering "
+            "with the clips' own audio only; the narration script "
+            "exists and the captions carry it"]
 
         with self._sessions() as session:
             # RIGHTS GATE FIRST — before any footage file is touched.
@@ -238,7 +235,7 @@ class ProductionService:
                 ffmpeg_path=self.settings.ffmpeg_path,
                 ffprobe_path=self.settings.ffprobe_path,
                 total_duration_seconds=total_duration,
-                narration_path=(narration_audio.file_path if narration_audio else None),
+                narration_path=None,
                 music_path=music.file_path if music.status == "included" else None,
                 timeout_seconds=float(self.settings.prod_render_timeout_seconds))
             validation = validate_render(
@@ -257,41 +254,18 @@ class ProductionService:
                 session.commit()
             raise
 
-        if narration_audio is not None:
-            narration_report = {
-                "script_words": len(narration_script.split()),
-                "estimated_seconds": narration_seconds,
-                "provider": narration_audio.provider,
-                "voice": narration_audio.voice,
-                "status": "generated",
-                "detail": narration_audio.detail,
-                "audio_path": narration_audio.file_path,
-                "duration_seconds": narration_audio.duration_seconds,
-                "chars": narration_audio.chars,
-                "chunks": narration_audio.chunks,
-            }
-        elif narration_failure is not None:
-            narration_report = {
-                "script_words": len(narration_script.split()),
-                "estimated_seconds": narration_seconds,
-                "provider": narration_provider.provider,
-                "voice": narration_provider.voice,
-                "status": "generation_failed",
-                "detail": narration_failure,
-                "audio_path": None,
-            }
-        else:
-            narration_report = {
-                "script_words": len(narration_script.split()),
-                "estimated_seconds": narration_seconds,
-                "provider": narration_provider.provider,
-                "voice": narration_provider.voice,
-                "status": ("not_generated_no_tts_provider"
-                           if narration_provider.status == "not_configured"
-                           else "not_generated_no_tts_implementation"),
-                "detail": narration_provider.detail,
-                "audio_path": None,
-            }
+        narration_report = {
+            "script_words": len(narration_script.split()),
+            "estimated_seconds": narration_seconds,
+            "provider": narration_provider.provider,
+            "voice": narration_provider.voice,
+            "status": "not_generated_voiceover_off_fullbleed_style",
+            "detail": ("voiceover is off by design in the full-bleed style — "
+                       "the reference videos carry the text on screen, not as "
+                       "narration; the Edge TTS code is intact but was not "
+                       "called, so no voice was synthesised"),
+            "audio_path": None,
+        }
         report = ProductionReport(
             job_id=job.id, rendered_video_id=rendered_id,
             file_path=str(output_path),
@@ -309,7 +283,8 @@ class ProductionService:
                 "lines": len(caption_plan),
                 "ass_files": [s["ass_file"] for s in segments if s.get("ass_file")],
                 "max_chars_per_line": 40,
-                "placement": "bottom third, centred, inside the 10% safe margins",
+                "placement": "raised above the big bottom caption "
+                             "(MarginV 380), centred, inside the 10% safe margins",
             },
             attributions=[{
                 "candidate_video_id": c["candidate_video_id"],
@@ -319,6 +294,12 @@ class ProductionService:
                                        if i < len(per_moment) else False,
                 "licence_name": per_moment[i].get("licence_name") if i < len(per_moment) else None,
             } for i, c in enumerate(clips)],
+            description_attribution="; ".join(
+                (per_moment[i].get("attribution_display") or "")
+                for i in range(len(clips))
+                if i < len(per_moment)
+                and per_moment[i].get("attribution_required")
+                and per_moment[i].get("attribution_display")),
             validation=validation.model_dump(),
             limitations=self._limitations(narration_provider, narration_audio,
                                           narration_failure, music, chime, whoosh),
@@ -329,15 +310,20 @@ class ProductionService:
                 "total_duration_seconds": total_duration,
                 "render_id": render_id,
                 "duration_ms": int((time.monotonic() - started) * 1000),
-                "graphics_style": "rankter",
+                "graphics_style": "fullbleed",
                 "graphics_layout": {
-                    "title": "Rankter-style big bold stroked title, "
-                             "topic keywords highlighted #ffd400",
-                    "ranked_list": "persistent 5-item list above the clip, "
-                                   "active rank highlighted #ffd400",
-                    "video_area": "clip in the lower 62% of the frame "
-                                  "(1080x1190 at y=730)",
-                    "background": "#0f1016",
+                    "title": "Full-bleed title bar (solid black, y 0..200): "
+                             "'RANKING' white + qualifier phrase red #ff2d2d, "
+                             "subject words yellow #ffd400",
+                    "ranked_list": "numbers 1. to 5. down the left edge, "
+                                   "active rank yellow #ffd400, per-clip "
+                                   "caption next to its number once played",
+                    "video_area": "clip fills the whole 1080x1920 frame, "
+                                  "no separate video zone, no dark background",
+                    "bottom_caption": "clip caption uppercased, 64px white "
+                                      "with 8px black stroke, centred at the bottom",
+                    "transitions": "straight cuts, no black gaps, no intro/outro cards",
+                    "voiceover": "off by design in the full-bleed style",
                 },
             })
         manifest = report.model_dump(mode="json")
@@ -433,52 +419,36 @@ class ProductionService:
     def _render_timeline(self, job, clips, moments, sources, caption_plan,
                          per_moment, intro_s, outro_s, transition_s,
                          total_duration, work_dir: Path) -> tuple[list[dict], list[str]]:
+        """Full-bleed timeline: the five clips, cut straight together.
+
+        `intro_s`, `outro_s` and `transition_s` are accepted for
+        call compatibility — the full-bleed EDL sets them all to
+        0.0, and this method renders no intro/outro cards and no
+        transition gaps. Each clip is reframed to the full
+        1080x1920 frame and carries the title bar, the left-side
+        numbers, its bottom caption and (when required) the
+        licence attribution. The returned segments are exactly
+        the five countdown clips, in #5 -> #1 order, with
+        timeline starts measured from the start of the video
+        (the EDL's own timeline_start_seconds are the same
+        values in the full-bleed EDL, since there are no cards
+        or gaps before them).
+        """
         s = self.settings
         warnings: list[str] = []
-        content: list[dict] = []
-        # Rankter-style ranked list, built once and drawn on the
-        # intro card and on every moment segment. Labels reuse the
-        # Creative Director's own narration text (signal-grounded,
-        # never a description of what happens in a clip) plus its
-        # score — nothing is invented here.
+        segments: list[dict] = []
+        # Per-clip short captions, built once and drawn on every
+        # segment. Labels reuse the Creative Director's own
+        # caption text (the first eight words of the moment
+        # narration, signal-grounded, never a description of what
+        # happens in a clip) — nothing is invented here.
         list_items: list[tuple[int, str]] = []
         for i, clip in enumerate(clips):
-            graphic = per_moment[i] if i < len(per_moment) else {}
-            countdown = graphic.get("countdown_graphics") or {}
-            narration_text = ((clip.get("narration_cue") or {}).get("text")
-                              or clip.get("caption") or "")
+            caption_text = clip.get("caption") or ""
             list_items.append((
                 int(clip["rank"]),
-                rankter_list_label(narration_text, int(clip["rank"]),
-                                   countdown.get("score_note"))))
-        # Intro card (scene 1 captions: the hook): Rankter-style
-        # title + the full ranked list (nothing highlighted yet —
-        # no clip is playing).
-        intro_cues = [c for c in caption_plan if c.get("scene_number") == 1]
-        intro_ass = self._ass_for_segment(work_dir, "intro", intro_cues, 0.0)
-        title_filters, _ = rankter_title_filters(
-            job.topic.strip(), work_dir=work_dir, font_file=s.prod_font_file,
-            tag="intro-title")
-        intro_list_filters, _ = rankter_list_filters(
-            list_items, None, work_dir=work_dir, font_file=s.prod_font_file,
-            tag="intro-list")
-        intro_fade = fade_filters(intro_s, transition_s,
-                                  fade_in=True, fade_out=_is_dissolve(clips[0]))
-        intro_filters = ",".join(
-            part for part in (title_filters, intro_list_filters, intro_fade) if part)
-        intro_filters = self._with_ass(intro_filters, intro_ass)
-        intro = render_silent_segment(
-            work_dir / "seg-00-intro.mp4", intro_s,
-            ffmpeg_path=s.ffmpeg_path, extra_video_filters=intro_filters,
-            background_color=RANKTER_BG,
-            timeout_seconds=float(s.prod_render_timeout_seconds))
-        content.append({"path": str(intro.output_path), "ass_file": str(intro_ass) if intro_ass else None,
-                        "report": {"kind": "intro", "rank": None, "moment_id": None,
-                                   "candidate_video_id": None, "duration_seconds": intro.duration_seconds,
-                                   "timeline_start_seconds": 0.0, "file_name": "seg-00-intro.mp4",
-                                   "subject_aware": False,
-                                   "transition_in": None, "transition_rendered": "fade in 0.5s"}})
-        # Five countdown clips.
+                clean_clip_caption(caption_text, int(clip["rank"]))))
+        cursor = 0.0
         for i, clip in enumerate(clips):
             moment = moments[clip["moment_id"]]
             source_path = sources[clip["candidate_video_id"]]
@@ -486,11 +456,15 @@ class ProductionService:
             centroid = motion_centroid_x(
                 source_path, float(clip["start_seconds"]), float(clip["end_seconds"]))
             graphic = per_moment[i] if i < len(per_moment) else {}
-            countdown = (graphic.get("countdown_graphics") or {})
             source_label = graphic.get("source_label") or "Untitled video"
             cue_start = float(clip["timeline_start_seconds"])
             clip_cues = [c for c in caption_plan if c.get("moment_id") == clip["moment_id"]]
-            ass_path = self._ass_for_segment(work_dir, f"clip-{i + 1}", clip_cues, cue_start)
+            # ASS captions are raised (MarginV 380) so they sit
+            # above the big bottom caption instead of colliding
+            # with it.
+            ass_path = self._ass_for_segment(
+                work_dir, f"clip-{i + 1}", clip_cues, cue_start, margin_v=380)
+            caption = dict(list_items).get(int(clip["rank"])) or ""
             gfx, _ = clip_graphics_filters(
                 rank=int(clip["rank"]), topic=job.topic.strip(),
                 list_items=list_items,
@@ -498,10 +472,8 @@ class ProductionService:
                 attribution_text=graphic.get("attribution_display"),
                 attribution_required=bool(graphic.get("attribution_required")),
                 duration_seconds=float(clip["duration_seconds"]),
-                transition_seconds=transition_s,
-                transition_in=str(graphic.get("transition_in") or ""),
                 work_dir=work_dir, font_file=s.prod_font_file,
-                score_note=countdown.get("score_note"))
+                bottom_caption=caption)
             gfx = self._with_ass(gfx, ass_path)
             extracted = extract_clip(
                 source_path, float(clip["start_seconds"]), float(clip["end_seconds"]),
@@ -509,84 +481,24 @@ class ProductionService:
                 ffmpeg_path=s.ffmpeg_path, ffprobe_path=s.ffprobe_path,
                 extra_video_filters=gfx, subject_x=centroid,
                 target_width=TARGET_WIDTH,
-                target_height=RANKTER_VIDEO_AREA_HEIGHT,
+                target_height=1920,
                 timeout_seconds=float(s.prod_render_timeout_seconds))
             if centroid is None:
                 warnings.append(
                     f"rank #{clip['rank']}: no motion detected in the clip, "
                     "centre crop used instead of subject-aware reframing")
-            content.append({"path": str(extracted.output_path),
-                            "ass_file": str(ass_path) if ass_path else None,
-                            "report": {"kind": "countdown_moment", "rank": int(clip["rank"]),
-                                       "moment_id": clip["moment_id"],
-                                       "candidate_video_id": clip["candidate_video_id"],
-                                       "duration_seconds": extracted.duration_seconds,
-                                       "timeline_start_seconds": cue_start,
-                                       "file_name": f"seg-{i + 1:02d}-clip.mp4",
-                                       "subject_aware": extracted.subject_aware,
-                                       "transition_in": graphic.get("transition_in"),
-                                       "transition_rendered": (
-                                           "fade-through-black 0.5s"
-                                           if "cross-dissolve" in str(graphic.get("transition_in") or "")
-                                           else "hard cut")}})
-        # Outro card (scene 7 captions: the closing) with the
-        # attribution credits for every clip, wrapped to fit the
-        # frame at a smaller size.
-        outro_start = float(clips[-1]["timeline_start_seconds"]) + float(clips[-1]["duration_seconds"]) + transition_s
-        outro_cues = [c for c in caption_plan if c.get("scene_number") == len(clips) + 2]
-        outro_ass = self._ass_for_segment(work_dir, "outro", outro_cues, outro_start)
-        from app.agents.creative_director.narration import split_captions
-        outro_lines = ["That's number one.", "Credits:"]
-        outro_sizes = [96, 52]
-        for entry in per_moment:
-            attribution = entry.get("attribution_display") or ""
-            if not attribution:
-                continue
-            for line in split_captions(attribution, max_chars=36):
-                outro_lines.append(line)
-                outro_sizes.append(36)
-        outro_filters, _ = card_graphics_filters(
-            lines=outro_lines, work_dir=work_dir, font_file=s.prod_font_file,
-            fade_in=_is_dissolve(clips[-1]), fade_out=True,
-            duration_seconds=outro_s, transition_seconds=transition_s,
-            sizes=outro_sizes)
-        outro_filters = self._with_ass(outro_filters, outro_ass)
-        outro = render_silent_segment(
-            work_dir / f"seg-{len(clips) + 1:02d}-outro.mp4", outro_s,
-            ffmpeg_path=s.ffmpeg_path, extra_video_filters=outro_filters,
-            background_color=RANKTER_BG,
-            timeout_seconds=float(s.prod_render_timeout_seconds))
-        content.append({"path": str(outro.output_path), "ass_file": str(outro_ass) if outro_ass else None,
-                        "report": {"kind": "outro", "rank": None, "moment_id": None,
-                                   "candidate_video_id": None, "duration_seconds": outro.duration_seconds,
-                                   "timeline_start_seconds": outro_start, "file_name": f"seg-{len(clips) + 1:02d}-outro.mp4",
-                                   "subject_aware": False, "transition_in": None,
-                                   "transition_rendered": "fade out 0.5s"}})
-        # Transition gaps: the EDL total adds transition_seconds
-        # between every pair of content segments, so each boundary
-        # gets an explicit black segment of that length. A dissolve
-        # clip additionally fades into/out of the gap; a hard-cut
-        # clip cuts to black and back. Without these gaps the
-        # timeline would be 3s short of the EDL total.
-        segments: list[dict] = []
-        for index, segment in enumerate(content):
-            if index > 0:
-                previous = content[index - 1]["report"]
-                gap_start = round(previous["timeline_start_seconds"]
-                                  + previous["duration_seconds"], 2)
-                gap = render_silent_segment(
-                    work_dir / f"seg-{index:02d}-transition.mp4", transition_s,
-                    ffmpeg_path=s.ffmpeg_path,
-                    timeout_seconds=float(s.prod_render_timeout_seconds))
-                segments.append({"path": str(gap.output_path), "ass_file": None,
-                                 "report": {"kind": "transition", "rank": None,
-                                            "moment_id": None, "candidate_video_id": None,
-                                            "duration_seconds": gap.duration_seconds,
-                                            "timeline_start_seconds": gap_start,
-                                            "file_name": f"seg-{index:02d}-transition.mp4",
-                                            "subject_aware": False, "transition_in": None,
-                                            "transition_rendered": "black gap 0.5s"}})
-            segments.append(segment)
+            segments.append({"path": str(extracted.output_path),
+                             "ass_file": str(ass_path) if ass_path else None,
+                             "report": {"kind": "countdown_moment", "rank": int(clip["rank"]),
+                                        "moment_id": clip["moment_id"],
+                                        "candidate_video_id": clip["candidate_video_id"],
+                                        "duration_seconds": extracted.duration_seconds,
+                                        "timeline_start_seconds": round(cursor, 2),
+                                        "file_name": f"seg-{i + 1:02d}-clip.mp4",
+                                        "subject_aware": extracted.subject_aware,
+                                        "transition_in": graphic.get("transition_in"),
+                                        "transition_rendered": "straight cut"}})
+            cursor += extracted.duration_seconds
         rendered_total = sum(seg["report"]["duration_seconds"] for seg in segments)
         if abs(rendered_total - total_duration) > 0.01:
             raise ExternalServiceError(
@@ -602,13 +514,14 @@ class ProductionService:
         return f"{filters},{ass_filter(ass_path)}" if filters else ass_filter(ass_path)
 
     def _ass_for_segment(self, work_dir: Path, name: str, cues: list[dict],
-                         segment_start: float) -> Path | None:
+                         segment_start: float, margin_v: int = 200) -> Path | None:
         if not cues:
             return None
         return build_ass(cues, work_dir / f"{name}.ass",
                          font_name="DejaVu Sans",
                          font_size=int(self.settings.prod_caption_font_size),
-                         time_offset_seconds=segment_start)
+                         time_offset_seconds=segment_start,
+                         margin_v=margin_v)
 
     # ------------------------------------------------------------ reads
     def get_rendered_video(self, job_id: str) -> RenderedVideoRead:
@@ -644,29 +557,15 @@ class ProductionService:
                      narration_failure: str | None,
                      music: AudioAsset,
                      chime: AudioAsset, whoosh: AudioAsset) -> list[str]:
-        if narration_audio is not None:
-            narration_limitation = (
-                f"Narration audio was generated with Edge TTS voice "
-                f"{narration_audio.voice!r} "
-                f"({narration_audio.duration_seconds:.1f}s, free, no API key). "
-                "Live synthesis is unverified on this machine "
-                "(speech.platform.bing.com is blocked by the network proxy); "
-                "the voice was verified by mixing, not by listening — QA "
-                "cannot hear a voice. Edge TTS is an unofficial client of "
-                "Microsoft's endpoint with no SLA; check the commercial-use "
-                "terms before publishing narrated videos.")
-        elif narration_failure is not None:
-            narration_limitation = (
-                f"Narration synthesis failed and the render fell back to a "
-                f"silent narration track: {narration_failure} The narration "
-                "script exists and the captions carry it, but no voice is "
-                "claimed. Re-running may succeed if the endpoint recovers.")
-        else:
-            narration_limitation = (
-                f"Narration audio is not generated: {narration_provider.detail} "
-                "The render's audio track is silence (plus the source clips' "
-                "own audio); the narration script exists and the captions "
-                "carry it, but no voice is claimed.")
+        narration_limitation = (
+            "The voiceover is off by design in the full-bleed style — "
+            "the reference videos carry the text on screen, not as "
+            "narration — so no TTS synthesis was attempted. The "
+            "render's audio track is the source clips' own audio; "
+            "the narration script exists and the captions carry it, "
+            "but no voice is claimed. The Edge TTS code is intact "
+            "and can be re-enabled by a future style that wants a "
+            "voiceover; QA flags this render needs_review.")
         limitations = [
             narration_limitation,
             "No licensed music library is configured: the render has no "
@@ -674,26 +573,27 @@ class ProductionService:
             "file that probes as audio.",
             "Sound-effect mixing is not implemented: SFX files are "
             "detected when configured but never mixed into the render.",
-            "Transitions are explicit black gap segments of the EDL "
-            "transition seconds between content segments, with "
-            "cross-dissolve clips additionally fading into/out of "
-            "the gap — not true xfades, which would overlap the "
-            "segments and shorten the total below the EDL total.",
-            "Graphics use the Rankter-style layout (big stroked "
-            "title with the topic's keywords highlighted yellow, "
-            "persistent ranked list with the active rank "
-            "highlighted, clip video in the lower 62% of the frame "
-            "on a dark #0f1016 background). The clips are "
+            "Clips are joined with straight cuts — no black gaps, no "
+            "intro/outro cards and no cross-dissolve transitions, "
+            "to match the reference videos.",
+            "Graphics use the full-bleed layout (clip fills the whole "
+            "1080x1920 frame; solid black title bar with 'RANKING' "
+            "white + qualifier phrase red and subject words yellow; "
+            "numbers 1. to 5. down the left edge with the active "
+            "rank yellow; per-clip caption next to its number; big "
+            "uppercased bottom caption). There is no end-credits "
+            "screen: a clip whose licence requires attribution gets "
+            "a small attribution line in the lower third for the "
+            "last 2 seconds of its segment, and the full attribution "
+            "for every clip is in the manifest and the report's "
+            "description_attribution — paste it into the video "
+            "description when publishing. The clips are "
             "auto-selected by Momentrix from licensed sources — "
-            "unlike Rankter, the user does not hand-pick or order "
-            "them — and the list labels reuse the Creative "
+            "unlike the reference videos, the user does not hand-pick "
+            "or order them — and the list labels reuse the Creative "
             "Director's signal-grounded narration text, not "
             "descriptions of what happens in a clip.",
             "Subject-aware reframing tracks the motion centroid measured "
             "by frame differencing; a static shot falls back to centre crop.",
         ]
         return limitations
-
-
-def _is_dissolve(clip: dict) -> bool:
-    return "cross-dissolve" in str(clip.get("transition_in") or "")

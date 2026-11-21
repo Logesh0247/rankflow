@@ -20,7 +20,7 @@ from app.agents.production.audio import find_audio_asset, find_music
 from app.agents.production.captions import build_ass, emphasise_caption
 from app.agents.production.extract import extract_clip, render_silent_segment
 from app.agents.production.graphics import (
-    card_graphics_filters, clip_graphics_filters, drawtext_filter,
+    clip_graphics_filters, drawtext_filter,
 )
 from app.agents.production.narration import (
     detect_narration_provider, generate_narration_audio,
@@ -252,64 +252,71 @@ def test_extract_clip_rejects_bad_range_and_missing_file(tmp_path):
         extract_clip(tmp_path / "nope.mp4", 0.0, 2.0, tmp_path / "clip.mp4")
 
 
-def test_rankter_clip_frame_has_dark_top_zone_and_video_below(tmp_path):
-    """A Rankter clip segment: dark #0f1016 top zone carrying the
-    title + ranked list, footage in the lower 62% of the frame."""
+def test_fullbleed_clip_frame_is_full_bleed_video(tmp_path):
+    """A full-bleed clip segment: green footage fills the whole
+    1080x1920 frame (no dark top zone, no separate video area),
+    with a solid black title bar across the top and the left-side
+    numbers + bottom caption drawn on top of the footage."""
     footage = _write_footage(tmp_path / "source.mp4", 5, (40, 160, 40),
                              duration=10.0)
-    items = [(5, "A sharp, fast segment. Score 80/100"),
-             (4, "A steady segment. Score 75/100"),
-             (3, "A dark segment. Score 70/100"),
-             (2, "A bright segment. Score 65/100"),
-             (1, "A sharp segment. Score 60/100")]
+    items = [(5, "A sharp, fast segment"),
+             (4, "A steady segment"),
+             (3, "A dark segment"),
+             (2, "A bright segment"),
+             (1, "A sharp segment")]
     gfx, _ = clip_graphics_filters(
         rank=5, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
         source_label="Parkour Fails 5 by Creator 5",
         attribution_text=None, attribution_required=False,
-        duration_seconds=6.0, transition_seconds=0.5,
-        transition_in="hard cut", work_dir=tmp_path,
-        font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        duration_seconds=6.0, work_dir=tmp_path,
+        font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        bottom_caption="A sharp, fast segment")
     clip = extract_clip(footage, 0.0, 6.0, tmp_path / "seg.mp4",
                         extra_video_filters=gfx,
-                        target_width=1080, target_height=1190)
+                        target_width=1080, target_height=1920)
     assert clip.width == 1080 and clip.height == 1920
     cap = cv2.VideoCapture(str(tmp_path / "seg.mp4"))
     ok, frame = cap.read()
     cap.release()
     assert ok, "could not read the rendered segment"
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    top = gray[:700, :]       # title + list zone (above the video area)
-    video = gray[730:, :]     # the clip itself
-    assert float(np.mean(top)) < 60  # dark Rankter background #0f1016
-    assert float(np.std(top)) > 2.0  # title + list text is visible
-    assert float(np.mean(video)) > 60  # green footage, clearly brighter
-    # The list area specifically has text pixels (not a flat dark zone).
-    list_area = gray[460:710, :]
-    assert float(np.std(list_area)) > 2.0
+    top = gray[:200, :]       # solid black title bar
+    assert float(np.mean(top)) < 60
+    assert float(np.std(top)) > 2.0  # title text is visible
+    mid = gray[300:1500, :]   # footage fills the middle of the frame
+    assert float(np.mean(mid)) > 60  # green footage, clearly brighter
+    # The numbers area (left edge) has text pixels.
+    numbers = gray[260:1400, 0:280]
+    assert float(np.std(numbers)) > 2.0
+    # The bottom caption area has text pixels.
+    bottom = gray[1650:1900, :]
+    assert float(np.std(bottom)) > 2.0
 
 
-def test_service_render_has_rankter_layout(engine, tmp_path):
-    """Full service render in the Rankter style: 1080x1920, EDL
-    duration, manifest records the style, and a sampled frame
-    inside clip #5 shows the dark top zone with the list above
-    the footage."""
+def test_service_render_has_fullbleed_layout(engine, tmp_path):
+    """Full service render in the full-bleed style: 1080x1920,
+    five clips only (30s), manifest records the style, and a
+    sampled frame inside clip #5 shows the black title bar on
+    top with footage filling the rest of the frame."""
     job = _new_job(engine)
     seeded = _seed_ranked_five(engine, job.id)
     footage = _footage_map(engine, job.id, seeded, tmp_path)
     report = ProductionService(engine, _settings()).run(job.id, footage_paths=footage)
     assert report.validation["valid"] is True
-    assert report.duration_seconds == pytest.approx(39.0, abs=0.6)
-    assert report.metrics["graphics_style"] == "rankter"
-    assert any("Rankter-style" in limitation for limitation in report.limitations)
+    assert report.duration_seconds == pytest.approx(30.0, abs=0.6)
+    assert report.metrics["graphics_style"] == "fullbleed"
+    assert any("full-bleed" in limitation for limitation in report.limitations)
+    assert report.narration["status"] == "not_generated_voiceover_off_fullbleed_style"
     cap = cv2.VideoCapture(report.file_path)
-    cap.set(cv2.CAP_PROP_POS_MSEC, 5000)  # inside clip #5 (3.5s–9.5s)
+    cap.set(cv2.CAP_PROP_POS_MSEC, 3000)  # inside clip #5 (0s–6s)
     ok, frame = cap.read()
     cap.release()
     assert ok, "could not read a frame from the rendered video"
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    assert float(np.mean(gray[:700, :])) < 60  # dark top zone
-    assert float(np.std(gray[460:710, :])) > 2.0  # list text visible
-    assert float(np.mean(gray[730:, :])) > 40  # footage below
+    assert float(np.mean(gray[:200, :])) < 60  # black title bar
+    assert float(np.std(gray[:200, :])) > 2.0  # title text visible
+    assert float(np.mean(gray[300:1500, :])) > 40  # footage fills the frame
+    assert float(np.std(gray[260:1400, 0:280])) > 2.0  # numbers visible
 
 
 def test_render_silent_segment_is_a_valid_card(tmp_path):
@@ -362,47 +369,36 @@ def test_drawtext_filter_uses_textfile_not_inline_text(tmp_path):
     assert "fontsize=64" in filt
 
 
-def test_clip_graphics_filters_have_rank_source_and_fade(tmp_path):
-    items = [(5, "A sharp, fast segment. Score 80/100"),
-             (4, "A steady segment. Score 75/100"),
-             (3, "A dark segment. Score 70/100"),
-             (2, "A bright segment. Score 65/100"),
-             (1, "A sharp segment. Score 60/100")]
+def test_clip_graphics_filters_have_rank_source_and_no_fade(tmp_path):
+    items = [(5, "A sharp, fast segment"),
+             (4, "A steady segment"),
+             (3, "A dark segment"),
+             (2, "A bright segment"),
+             (1, "A sharp segment")]
     filters, files = clip_graphics_filters(
         rank=5, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
         source_label="Parkour Fails 5 by Creator 5",
         attribution_text="Parkour Fails 5 by Creator 5 (CC BY 4.0)",
         attribution_required=True, duration_seconds=6.0,
-        transition_seconds=0.5, transition_in="cross-dissolve (0.5s)",
         work_dir=tmp_path,
         font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        score_note="Score 80.0/100")
-    # Rankter frame first: the clip is padded into the lower 62%.
-    assert "pad=1080:1920:0:730:color=0x0f1016" in filters
+        bottom_caption="A sharp, fast segment")
+    # Full-bleed frame: no pad into a video area, no fades —
+    # straight cuts, the clip fills the whole frame.
+    assert "pad=" not in filters
+    assert "fade=" not in filters
     assert "drawtext=" in filters
     assert "fontcolor=0xffd400" in filters  # PARKOUR/FAILS + active #5 line
-    assert "borderw=8" in filters  # stroked title
-    assert "fade=t=in" in filters and "fade=t=out" in filters
+    assert "borderw=8" in filters  # stroked title / bottom caption
     assert len(files) >= 4
     hard, _ = clip_graphics_filters(
         rank=1, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
         source_label="Clip", attribution_text=None,
         attribution_required=False, duration_seconds=6.0,
-        transition_seconds=0.5, transition_in="hard cut",
         work_dir=tmp_path,
         font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-    assert "fade=t=in" not in hard
-    assert "pad=1080:1920:0:730" in hard
-
-
-def test_card_graphics_filters_centre_lines(tmp_path):
-    filters, files = card_graphics_filters(
-        lines=["TOP 5 CRAZIEST PARKOUR FAILS", "TOP 5 COUNTDOWN"],
-        work_dir=tmp_path,
-        font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        duration_seconds=3.0)
-    assert filters.count("drawtext=") == 2
-    assert "fade=t=in" in filters
+    assert "fade=" not in hard
+    assert "pad=" not in hard
 
 
 # ---------------------------------------------------------------- Phase 4: narration
@@ -535,27 +531,10 @@ def test_concat_with_narration_mixes_it_over(tmp_path):
     assert audio.mean_volume_db is not None and audio.mean_volume_db > -70.0
 
 
-def _stub_narration_audio(script_text, output_path, settings, **kwargs):
-    """Test-only stand-in for Edge TTS synthesis: a real tone MP3
-    as long as the estimated narration, so mixing, loudness and QA
-    behave exactly as with a real voice file. Never used outside
-    tests; it stands in for the live endpoint, which is
-    unreachable from this machine."""
-    from app.agents.production.narration import (
-        NarrationAudio, narration_estimated_seconds,
-    )
-
-    seconds = max(1.0, narration_estimated_seconds(
-        script_text, words_per_minute=float(settings.cd_narration_wpm)))
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-                    f"sine=frequency=440:duration={seconds:.2f}",
-                    "-c:a", "libmp3lame", "-q:a", "4", str(output_path)],
-                   check=True)
-    return NarrationAudio(
-        provider="edge-tts", voice=settings.tts_voice, status="generated",
-        file_path=str(output_path), duration_seconds=round(seconds, 2),
-        chars=len(script_text), chunks=1,
-        detail="stub narration (test only — stands in for Edge TTS)")
+# The stubbed-narration helper was removed with the voiceover-off
+# restyle (2026-11-21): the full-bleed style never calls the
+# synthesiser, so there is nothing to stand in for. The TTS
+# code itself is still tested in tests/test_tts.py.
 
 
 # ---------------------------------------------------------------- service: happy path
@@ -567,17 +546,17 @@ def test_service_renders_a_real_mp4_from_the_edl(engine, tmp_path):
     assert report.width == 1080 and report.height == 1920
     assert report.fps == pytest.approx(30.0, abs=0.1)
     assert report.video_codec == "h264" and report.audio_codec == "aac"
-    # Timeline: intro 3 + five 6s clips + outro 3 + six 0.5s transitions = 39s.
-    assert report.duration_seconds == pytest.approx(39.0, abs=0.6)
-    assert len(report.segments) == 13  # 7 content + 6 transition gaps
-    assert [s.kind for s in report.segments] == (
-        ["intro", "transition"] + ["countdown_moment", "transition"] * 4
-        + ["countdown_moment", "transition", "outro"])
+    # Timeline (full-bleed style): five 6s clips only, straight
+    # cuts — no intro/outro cards, no transition gaps = 30s.
+    assert report.duration_seconds == pytest.approx(30.0, abs=0.6)
+    assert len(report.segments) == 5
+    assert [s.kind for s in report.segments] == ["countdown_moment"] * 5
     assert [s.rank for s in report.segments if s.kind == "countdown_moment"] == [5, 4, 3, 2, 1]
+    assert [s.transition_rendered for s in report.segments] == ["straight cut"] * 5
     assert report.validation["valid"] is True
     assert report.validation["decode_errors"] == []
-    # Honest asset labels: no TTS, no music, no SFX mixed.
-    assert report.narration["status"] == "not_generated_no_tts_provider"
+    # Honest asset labels: voiceover off by design, no music, no SFX mixed.
+    assert report.narration["status"] == "not_generated_voiceover_off_fullbleed_style"
     assert report.narration["audio_path"] is None
     assert report.music.status == "not_included_no_licensed_library"
     assert report.sfx_mixed is False
@@ -585,6 +564,10 @@ def test_service_renders_a_real_mp4_from_the_edl(engine, tmp_path):
     assert report.captions["lines"] > 0
     assert len(report.attributions) == 5
     assert all(a["attribution_required"] for a in report.attributions)
+    # Attribution for the description: every required attribution
+    # is recorded even though the video has no credits screen.
+    assert report.description_attribution, "description attribution must not be empty"
+    assert "Creator 5" in report.description_attribution
     # Persisted row + manifest.
     sessions = sessionmaker(bind=engine)
     with sessions() as session:
@@ -598,42 +581,32 @@ def test_service_renders_a_real_mp4_from_the_edl(engine, tmp_path):
     assert decode_check(report.file_path) == []
 
 
-def test_service_renders_with_stubbed_narration_voice_and_passes_qa(engine, tmp_path, monkeypatch):
-    """The generated-voice path, end to end: with a stub standing
-    in for Edge TTS (the live endpoint is unreachable from this
-    machine), production mixes a real narration track into the
-    render, the manifest records it as generated, the audio is
-    measurably non-silent, and QA reaches `pass` — the verdict a
-    voiceless render can never reach. The semantic checks stay
+def test_service_voiceover_stays_off_even_with_tts_enabled_and_qa_needs_review(
+        engine, tmp_path):
+    """The voiceover-off path, end to end: even with TTS enabled,
+    the full-bleed style never calls the synthesiser — the
+    manifest records the voiceover as off by design, no narration
+    audio is mixed in, and QA reaches `needs_review`, the honest
+    verdict for a voiceless render. The semantic checks stay
     `not_tested`: no VLM/OCR exists to verify wording against the
     picture."""
-    import app.agents.production.service as production_service
-    from app.agents.quality_assurance.audio import analyse_audio
     from app.agents.quality_assurance.service import QAService
 
-    monkeypatch.setattr(production_service, "generate_narration_audio",
-                        _stub_narration_audio)
     job = _new_job(engine)
     seeded = _seed_ranked_five(engine, job.id)
     footage = _footage_map(engine, job.id, seeded, tmp_path)
     report = ProductionService(engine, _settings(tts_enabled=True)).run(
         job.id, footage_paths=footage)
-    assert report.narration["status"] == "generated"
+    assert report.narration["status"] == "not_generated_voiceover_off_fullbleed_style"
     assert report.narration["provider"] == "edge-tts"
     assert report.narration["voice"] == "en-US-GuyNeural"
-    assert report.narration["audio_path"] is not None
-    assert report.narration["duration_seconds"] > 0
+    assert report.narration["audio_path"] is None
     assert report.validation["valid"] is True
-    audio = analyse_audio(report.file_path, duration_seconds=report.duration_seconds)
-    assert audio.has_audio is True
-    assert audio.effectively_silent is False
-    assert audio.mean_volume_db is not None and audio.mean_volume_db > -70.0
     qa = QAService(engine, _settings()).run(job.id)
-    assert qa.verdict == "pass", f"issues: {qa.issues}"
-    assert qa.status == "PASSED"
-    assert qa.issues == []
-    assert any(c["name"] == "narration_audio" and c["verdict"] == "pass"
-               for c in qa.checks)
+    assert qa.verdict == "needs_review", f"issues: {qa.issues}"
+    assert qa.status == "NEEDS_REVIEW"
+    assert qa.issues, "needs_review must carry issues"
+    assert any("narration" in issue.lower() for issue in qa.issues)
     assert any(c["name"] == "semantic_narration_accuracy" and c["verdict"] == "not_tested"
                for c in qa.checks)
 
@@ -714,10 +687,10 @@ def test_orchestrator_runs_real_production_then_qa(engine, tmp_path):
     """Full real pipeline: research (test provider) -> rights ->
     video intelligence (local footage) -> ranking -> creative
     director -> production -> quality assurance (Prompt 09).
-    QA verdict is needs_review, not pass: TTS is disabled for
-    this test, so the render has no narration voice and
-    effectively silent audio. (With a real voice the same
-    pipeline reaches pass — see the stubbed-narration test.)"""
+    QA verdict is needs_review, not pass: the voiceover is off by
+    design in the full-bleed style, so the render has no narration
+    voice. (Enabling a voiceover would need a style that calls
+    TTS — see the voiceover-off test.)"""
     job = _new_job(engine)
     colours = [(40, 160, 40), (40, 40, 180), (40, 200, 220), (120, 40, 20), (140, 140, 140)]
     sessions = sessionmaker(bind=engine)
@@ -774,7 +747,7 @@ def test_api_production_endpoints(engine, tmp_path):
         assert rendered["width"] == 1080 and rendered["height"] == 1920
         production = client.get(f"/jobs/{job.id}/production").json()
         assert production["file_path"] == report.file_path
-        assert production["narration"]["status"] == "not_generated_no_tts_provider"
+        assert production["narration"]["status"] == "not_generated_voiceover_off_fullbleed_style"
         assert production["music"]["status"] == "not_included_no_licensed_library"
         download = client.get(f"/jobs/{job.id}/rendered-video/download")
         assert download.status_code == 200

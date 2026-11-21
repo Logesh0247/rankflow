@@ -58,7 +58,8 @@ def emphasise_caption(text: str) -> str:
 def build_ass(caption_cues: list[dict], output_path: str | Path, *,
               font_name: str = "DejaVu Sans",
               font_size: int = DEFAULT_FONT_SIZE,
-              time_offset_seconds: float = 0.0) -> Path:
+              time_offset_seconds: float = 0.0,
+              margin_v: int = 200) -> Path:
     """Write an .ass subtitle file from caption cues.
 
     Each cue needs start_seconds, end_seconds and text. Times are
@@ -66,6 +67,10 @@ def build_ass(caption_cues: list[dict], output_path: str | Path, *,
     segment start) so the file is segment-relative. A cue longer
     than 40 characters, or one that ends before it starts, is a
     validation error — captions are never silently truncated.
+    `margin_v` is the distance from the bottom edge in pixels
+    (default 200, the bottom third); the full-bleed style raises
+    it so the narration captions sit above the big bottom
+    caption instead of colliding with it.
     """
     output = Path(output_path)
     events: list[str] = []
@@ -100,7 +105,7 @@ def build_ass(caption_cues: list[dict], output_path: str | Path, *,
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
-        "&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,108,108,200,1\n"
+        f"&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,108,108,{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "

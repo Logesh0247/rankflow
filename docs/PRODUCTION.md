@@ -28,68 +28,68 @@ graphics, audio design, rendering, and render validation.
    used and the manifest says so. Safe margins keep text inside
    the frame; the crop window is always even-sized and inside
    the source.
-4. **Narration** — the narration script from the Creative Director
-   plan is synthesised to MP3 with **Edge TTS** (``edge-tts``,
-   Microsoft Edge neural voices — free, no API key, no account)
-   at the configured voice (default ``en-US-GuyNeural``,
-   alternative ``en-US-JennyNeural``; `TTS_VOICE`,
-   `TTS_PROVIDER=edge-tts`, `TTS_ENABLED=true`). The script is
-   split into sentence chunks (≤900 chars) and each chunk is
-   synthesised separately, then joined with FFmpeg into one MP3
-   that starts at t=0 and is mixed over the full timeline as the
-   primary track (music, when present, stays at low volume under
-   it). The manifest records voice, duration, character count and
-   chunk count with status ``generated``. **Failure is fail-soft:**
-   if synthesis fails (endpoint down, rate-limited, or blocked —
-   live synthesis is UNVERIFIED on this machine because the
-   network proxy blocks `speech.platform.bing.com`), the render
-   falls back to a silent narration track, the manifest records
-   status ``generation_failed`` with the reason, and QA reports
-   `needs_review` — a TTS failure never hard-fails a job. The
-   narration script, word count and duration estimate are always
-   in the manifest, and captions carry the words on screen.
-   Commercial-use caveat: edge-tts is an unofficial client of
-   Microsoft's endpoint with no SLA and possible rate-limiting —
-   check the commercial-use terms before publishing narrated
-   videos. If Edge TTS proves unreliable, the documented
-   fallback is Piper (fully offline, needs a voice model
-   downloaded, less natural voice).
+4. **Narration** — **off by design in the full-bleed style**
+   (2026-11-21 restyle): the reference videos carry the text on
+   screen, not as narration, so no TTS synthesis runs and the
+   render's audio track is the source clips' own audio. The Edge
+   TTS code (`edge-tts`, Microsoft Edge neural voices — free, no
+   API key, no account; `TTS_PROVIDER=edge-tts`,
+   `TTS_VOICE=en-US-GuyNeural`, `TTS_ENABLED=true`) is intact,
+   just not called in this style path, and can be re-enabled by a
+   future style that wants a voiceover. The narration script from
+   the Creative Director plan still exists, its word count and
+   duration estimate are in the manifest with status
+   ``not_generated_voiceover_off_fullbleed_style``, and captions
+   carry the words on screen. QA therefore reports
+   `needs_review` for every full-bleed render — the honest verdict
+   for a voiceless video. Commercial-use caveat (if TTS is ever
+   re-enabled): edge-tts is an unofficial client of Microsoft's
+   endpoint with no SLA and possible rate-limiting — check the
+   commercial-use terms before publishing narrated videos. If Edge
+   TTS proves unreliable, the documented fallback is Piper
+   (fully offline, needs a voice model downloaded, less natural
+   voice). Live synthesis is UNVERIFIED on this machine because
+   the network proxy blocks `speech.platform.bing.com`.
 5. **Captions** — the Creative Director caption plan is rendered
    as an ASS file per segment and burned in with libass
-   (DejaVu Sans Bold, 54 px, centred bottom third, max 40
+   (DejaVu Sans Bold, 54 px, centred, max 40
    characters per line, word emphasis via the plan's
    `emphasis_words`). Captions are re-timed to each segment's
    timeline start; a cue that falls outside its segment fails
-   validation.
-6. **Graphics** — Rankter-style drawtext overlays, all from the
+   validation. In the full-bleed style the ASS captions are
+   raised (MarginV 380) so they sit above the big bottom caption
+   instead of colliding with it.
+6. **Graphics** — full-bleed drawtext overlays, all from the
    EDL/visual direction and the job topic, no invented text. The
-   1080×1920 frame is split: a dark `#0f1016` top zone (title +
-   ranked list) above the clip video in the lower 62% of the
-   frame (1080×1190 at y=730, reframed with the same
-   motion-centroid subject-aware crop, then padded in). The title
-   is the job topic, uppercased and word-wrapped (96px, falling
-   back to 72/56px when it needs more than two lines), big bold
-   stroked white text with an 8px black stroke and the topic's
-   content words highlighted yellow `#ffd400` (e.g. `CAT` in
-   "top 5 cat funny moments"). The ranked list shows all five
-   moments (`#5` … `#1`, 40px, starting ~24% from the top, 10px
-   spacing); it stays visible while its clip plays and the item
-   currently playing is highlighted yellow. List labels reuse the
-   Creative Director's per-moment narration text (signal-grounded,
-   never a description of what happens in the clip) with the
-   leading "Number N." stripped and the narration's own score
-   appended ("Score 80/100"), truncated to fit. Per-clip source
-   attribution is shown in the lower third when the licence
-   requires it, the intro card shows the title + full list, and
-   the outro card carries the full attribution credits. Text is
-   measured with Pillow against the same DejaVu Sans Bold font
-   FFmpeg draws with, so titles wrap and centre exactly. Fade
-   in/out are 0.5s; hard-cut clips get no fade. Honest limit: the
-   style matches Rankter's layout, but the clips are
-   auto-selected by Momentrix from licensed sources — unlike
-   Rankter, the user does not hand-pick or order them, and the
-   list labels are the system's signal-grounded wording, not
-   hand-written clip descriptions.
+   clip fills the whole 1080×1920 frame (reframed with the same
+   motion-centroid subject-aware crop, no padding, no dark
+   background). A solid black title bar (y 0..200) carries the
+   job topic split into two lines: "RANKING" white plus a
+   qualifier phrase (e.g. "THE CRAZIEST") red `#ff2d2d` on line 1,
+   the remaining subject words yellow `#ffd400` on line 2, all
+   big bold stroked text (84px falling back to 72/56px, 8px
+   black stroke). Down the left edge, numbers 1. to 5. (120px,
+   10px black stroke) stay on screen the whole video; the number
+   of the clip currently playing is yellow, the rest white, and
+   each number's short per-clip caption (48px, white with black
+   outline) appears next to it once its clip has played. Across
+   the bottom, a big bold uppercased caption (64px, 8px black
+   stroke, up to two lines) carries the current clip's caption.
+   Text is measured with Pillow against the same DejaVu Sans Bold
+   font FFmpeg draws with, so titles wrap and centre exactly.
+   Straight cuts between clips, no black gap, no intro/outro
+   cards. Per-clip source attribution is shown in the lower third
+   for the last 2 seconds of its segment when the licence
+   requires it; there is **no end-credits screen** — the full
+   attribution for every clip is in the render manifest and in
+   the report's `description_attribution`, to be pasted into the
+   video description when publishing. Honest limit: the style
+   matches the reference parkour ranking videos' layout, but the
+   clips are auto-selected by Momentrix from licensed sources —
+   unlike those videos, the user does not hand-pick or order
+   them, and the list labels reuse the Creative Director's
+   signal-grounded narration text, not hand-written clip
+   descriptions.
 7. **Audio design** — there is **no licensed music or SFX library
    configured** (`PROD_MUSIC_DIR` / `PROD_SFX_DIR` empty), so the
    render has no background music and no mixed SFX; the manifest
@@ -100,13 +100,11 @@ graphics, audio design, rendering, and render validation.
    SFX detection exists; SFX mixing is not implemented.
 8. **Rendering** — FFmpeg concat demuxer (re-encode, not stream
    copy) to MP4, H.264 (libx264, CRF 20, yuv420p, faststart),
-   AAC 128k stereo, 1080×1920 @ 30 fps. Transitions are explicit
-   black gap segments of the EDL transition seconds between
-   content segments, with cross-dissolve clips additionally fading
-   into/out of the gap — not true xfades, which would overlap the
-   segments and shorten the total below the EDL total. The
-   rendered duration must match the EDL total within 0.6s or the
-   render is rejected.
+   AAC 128k stereo, 1080×1920 @ 30 fps. Clips are joined with
+   straight cuts — no black gap segments, no intro/outro cards,
+   no fades. The rendered duration must match the EDL total
+   (the five clip durations only) within 0.6s or the render is
+   rejected.
 9. **Render validation** — ffprobe checks file integrity
    (decodable, no decode errors), duration, 1080×1920 resolution,
    30 fps, H.264 video stream, AAC audio stream. A report and a
@@ -167,23 +165,32 @@ H.264 1080×1920 @ 30 fps + AAC, 74.07s, 2.88 MB, validation
 `valid: true`, 13 segments (intro + 5 moments + outro + 6
 transition gaps). Its manifest states the honest limits in full:
 narration `not_generated_no_tts_provider`, music and SFX
-`not_included_no_licensed_library`.
+`not_included_no_licensed_library`. **This demo predates the
+full-bleed restyle (2026-11-21) and still shows the old Rankter
+layout; the current pipeline renders 5 segments (the five clips
+only, straight cuts) with narration
+`not_generated_voiceover_off_fullbleed_style`.**
 
 ## Known limitations
 
-- Narration is synthesised with Edge TTS by default, but **live
-  synthesis is unverified on this machine**: the network proxy
-  blocks `speech.platform.bing.com`, so every real synthesis
-  attempt here fails fast (~1s) and the render falls back to a
-  silent narration track with the reason recorded. Verify live
-  synthesis on the deploy host (Render) once its deploy is fixed.
-  Tests use a stubbed synthesiser and never claim a live voice
-  was heard.
+- Narration is **off by design in the full-bleed style** — the
+  reference videos carry the text on screen, not as narration —
+  so no TTS synthesis runs and every render's QA report is
+  `needs_review`. The Edge TTS code is intact and can be
+  re-enabled by a future style; live synthesis is unverified
+  on this machine (the network proxy blocks
+  `speech.platform.bing.com`). Tests use a stubbed synthesiser
+  and never claim a live voice was heard.
 - No licensed music/SFX library is configured, so renders have no
   background music and no mixed SFX. SFX files are detected when
   configured but never mixed into the render.
-- Transitions are explicit black gaps, not true xfades — a
-  deliberate trade-off to preserve the EDL total duration.
+- Clips are joined with straight cuts — no black gaps, no
+  intro/outro cards, no fades — to match the reference videos.
+  There is no end-credits screen: attribution lives in the
+  manifest and in the report's `description_attribution` (paste
+  it into the video description when publishing), plus a small
+  on-screen attribution line in the last 2 seconds of each
+  segment whose licence requires it.
 - Subject-aware reframing is a motion centroid from frame
   differencing, not object tracking; fast or off-centre action can
   still be cropped. No motion in a clip falls back to a centre
@@ -200,4 +207,6 @@ narration `not_generated_no_tts_provider`, music and SFX
   With Edge TTS synthesising (verified with a stubbed synthesiser
   in `tests/test_production.py`), the same pipeline reaches QA
   `pass`: narration status `generated`, audio measurably
-  non-silent.
+  non-silent. That path is currently disabled: in the full-bleed
+  style the voiceover is off by design, so the pipeline always
+  ends `needs_review` on narration.

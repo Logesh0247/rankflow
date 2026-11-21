@@ -82,9 +82,8 @@ def extract_clip(source_path: str | Path, start_seconds: float, end_seconds: flo
     the source audio when present, otherwise generated silence.
 
     The output frame is `target_width`x`target_height` (default
-    1080x1920; the Rankter layout reframes clips to 1080x1190 and
-    pads them into the full frame with the frame filter, so the
-    output is still 1080x1920).
+    1080x1920 — the full-bleed style fills the whole frame, so
+    clips are reframed to the full frame, not padded into it).
     """
     source = Path(source_path)
     output = Path(output_path)
@@ -154,12 +153,12 @@ def render_silent_segment(output_path: str | Path, duration_seconds: float,
                           timeout_seconds: float = 300.0) -> ExtractedClip:
     """Render a solid-colour title/outro card segment (no source file).
 
-    Used for the intro and outro cards and the black transition
-    gaps. The card is a solid frame (`background_color`, default
-    near-black) with the overlay filters supplied by the caller
-    (drawtext); audio is generated silence so the segment
-    concatenates cleanly. Intro/outro cards use the Rankter dark
-    background #0f1016; transition gaps keep the default black.
+    Kept for compatibility and for tests; the full-bleed style
+    renders no cards or transition gaps, so Production no longer
+    calls it. The card is a solid frame (`background_color`,
+    default near-black) with the overlay filters supplied by the
+    caller (drawtext); audio is generated silence so the segment
+    concatenates cleanly.
     """
     output = Path(output_path)
     if duration_seconds <= 0:

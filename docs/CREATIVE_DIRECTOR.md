@@ -73,17 +73,27 @@ Narration is a continuous voiceover cued at each clip's start,
 not a hard per-clip limit: the validator checks the total
 voiceover against the total timeline, and flags (as a warning)
 any moment whose narration runs more than 2s past its clip.
+(The voiceover itself is off by design in the full-bleed style
+— see `docs/PRODUCTION.md` — but the script, the word budget
+and the captions still exist.)
 
 ## Timing
 
-Timeline = intro (3s) + five clips + outro (3s) + transitions
-(0.5s between each of the seven segments). Narration words are
-budgeted to 95% of the timeline at 150 wpm, shared between the
-five moments in proportion to clip length (min 4 words each, so
+Timeline = the five clips only. Full-bleed style (2026-11-21):
+no intro card, no outro card and no transition gaps — the title
+bar and the numbered list are overlaid on the clips, and the
+clips are cut straight together. Narration words are budgeted
+to 95% of the timeline at 150 wpm, shared between the five
+moments in proportion to clip length (min 4 words each, so
 every moment still gets its rank intro). Hook and closing take
-their words first.
+their words first. `CD_INTRO_SECONDS` / `CD_OUTRO_SECONDS` /
+`CD_TRANSITION_SECONDS` are retained in config for the old
+layout and are not used by the EDL; the storyboard still keeps
+its seven scenes as text records (intro/outro with zero
+duration), and the caption plan covers only the five moment
+scenes.
 
-Example: five 6s clips → 3 + 30 + 3 + 3 = 39s total.
+Example: five 6s clips → 30s total.
 
 ## Files
 
@@ -100,7 +110,10 @@ Example: five 6s clips → 3 + 30 + 3 + 3 = 39s total.
 
 `CD_TARGET_DURATION_SECONDS=60.0`, `CD_INTRO_SECONDS=3.0`,
 `CD_OUTRO_SECONDS=3.0`, `CD_TRANSITION_SECONDS=0.5`,
-`CD_NARRATION_WPM=150.0` (see `.env.example`).
+`CD_NARRATION_WPM=150.0` (see `.env.example`). The intro/outro/
+transition values are currently unused by the EDL (full-bleed
+style, 2026-11-21) — they are kept for a future style that
+wants cards or gaps again.
 
 ## Verification (Prompt 07)
 

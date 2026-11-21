@@ -25,8 +25,10 @@ services:
     envVars:
       - key: APP_ENV
         value: production
-      - key: DATABASE_URL
-        value: sqlite:////app/data/rankflow.db
+      # DATABASE_URL is set on the Render dashboard only (Neon Postgres,
+      # set 2026-11-21). It must NOT be listed here — render.yaml would
+      # overwrite the dashboard value with SQLite on every push, wiping
+      # jobs again. See docs/DEPLOYMENT.md.
       - key: STORAGE_ROOT
         value: /app/data/storage
       - key: RATE_LIMIT_PER_MINUTE

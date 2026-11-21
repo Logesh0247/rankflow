@@ -245,14 +245,19 @@ class CreativeDirectorService:
     def _build(self, job, moments: list[MomentPlanInput]) -> CreativeReport:
         s = self.settings
         countdown = sorted(moments, key=lambda m: -m.rank)  # #5 first
-        intro_s = float(s.cd_intro_seconds)
-        outro_s = float(s.cd_outro_seconds)
-        transition_s = float(s.cd_transition_seconds)
+        # Full-bleed style (2026-11-21): no intro card, no outro
+        # card and no transition gaps — the title bar and the
+        # numbered list are overlaid on the clips, and the five
+        # clips are cut straight together. The timeline is exactly
+        # the five clip durations. cd_intro_seconds /
+        # cd_outro_seconds / cd_transition_seconds are retained in
+        # config for the old layout and are not used by this EDL.
+        intro_s = 0.0
+        outro_s = 0.0
+        transition_s = 0.0
         wpm = float(s.cd_narration_wpm)
         clip_total = sum(m.duration for m in countdown)
-        segments = 1 + len(countdown) + 1  # intro + clips + outro
-        total_duration = round(intro_s + clip_total + outro_s
-                               + transition_s * (segments - 1), 2)
+        total_duration = round(clip_total, 2)
 
         hook = select_hook(job.topic)
         closing = closing_text()
@@ -261,12 +266,17 @@ class CreativeDirectorService:
         # timeline (continuous voiceover, 95% of the timeline at
         # the configured words-per-minute). Hook and closing take
         # their words first; the rest is shared between the five
-        # moments in proportion to their clip lengths (min 4 words
-        # each, so every moment still gets its rank intro).
+        # moments in proportion to their clip lengths. The floor
+        # is 2 words per moment — the rank intro ("Number N."),
+        # which build_moment_narration always keeps — never 4:
+        # on a short timeline (five 2s clips = 10s) a 4-word
+        # floor would force the script past the budget and fail
+        # validation, as the full-bleed timeline (clips only, no
+        # intro/outro/gaps to pad it) exposed.
         total_words = int(total_duration * wpm / 60.0 * 0.95)
         hook_words = len(hook.text.split())
         closing_words = len(closing.split())
-        remaining = max(5 * 4, total_words - hook_words - closing_words)
+        remaining = max(5 * 2, total_words - hook_words - closing_words)
         budgets = self._allocate_words(countdown, remaining)
 
         narrations: dict[int, str] = {}
@@ -303,9 +313,10 @@ class CreativeDirectorService:
         scenes: list[dict] = [{
             "scene_number": 1, "rank": None, "moment_id": None,
             "kind": "intro", "narration": hook.text,
-            "duration_seconds": intro_s,
+            "duration_seconds": None,
             "caption_lines": split_captions(hook.text),
-            "graphic": "Title card: topic + 'Top 5 Countdown'.",
+            "graphic": ("No intro card in the full-bleed style — the "
+                        "title bar and numbers are overlaid on the first clip."),
         }]
         for i, moment in enumerate(countdown, start=2):
             scenes.append({
@@ -321,9 +332,11 @@ class CreativeDirectorService:
         scenes.append({
             "scene_number": len(countdown) + 2, "rank": None, "moment_id": None,
             "kind": "outro", "narration": closing,
-            "duration_seconds": outro_s,
+            "duration_seconds": None,
             "caption_lines": split_captions(closing),
-            "graphic": "Outro card: credits with the attribution for every clip.",
+            "graphic": ("No outro card in the full-bleed style — "
+                        "attribution is in the manifest/description, not a "
+                        "credits screen."),
         })
 
         caption_plan = self._caption_plan(scenes, offsets, wpm)
@@ -362,19 +375,24 @@ class CreativeDirectorService:
 
     @staticmethod
     def _allocate_words(countdown: list[MomentPlanInput], total: int) -> dict[int, int]:
-        """Share a word budget between moments by clip length (min 4 each)."""
+        """Share a word budget between moments by clip length (min 2 each).
+
+        The minimum is the 2-word rank intro ("Number N.") —
+        build_moment_narration always keeps it, and a higher floor
+        would overshoot the budget on short timelines (see _build).
+        """
         weights = [max(m.duration, 0.5) for m in countdown]
         total_weight = sum(weights)
         budgets: dict[int, int] = {}
         used = 0
         for moment, weight in zip(countdown, weights):
-            share = max(4, int(total * weight / total_weight))
+            share = max(2, int(total * weight / total_weight))
             budgets[moment.rank] = share
             used += share
         # Trim the longest moments first if the shares overshoot.
         while used > total:
             longest = max(countdown, key=lambda m: budgets[m.rank])
-            if budgets[longest.rank] <= 4:
+            if budgets[longest.rank] <= 2:
                 break
             budgets[longest.rank] -= 1
             used -= 1
@@ -390,6 +408,12 @@ class CreativeDirectorService:
         """
         plan: list[dict] = []
         for scene in scenes:
+            # Scenes with no duration (intro/outro in the full-bleed
+            # style) carry storyboard text only — they get no
+            # caption cues, because a zero-length cue would fail
+            # validation in Production and in QA.
+            if not scene.get("duration_seconds"):
+                continue
             key = scene["moment_id"] or scene["kind"]
             start = offsets[key]
             duration = float(scene["duration_seconds"])
@@ -451,8 +475,8 @@ class CreativeDirectorService:
                      "at_seconds": cue_start},
                 ],
                 "transition_in": visual["per_moment"][i - 1]["transition_in"],
-                "transition_out": ("fade out to outro" if i == len(countdown)
-                                   else visual["per_moment"][i]["transition_in"]),
+                "transition_out": "straight cut (end of video)" if i == len(countdown)
+                                  else "straight cut",
             })
         return {
             "job_id": job.id, "clips": extended,

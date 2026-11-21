@@ -15,19 +15,21 @@ from app.agents.creative_director.signals import MomentPlanInput
 
 CAPTION_PLACEMENT = "bottom third, centred, inside the 10% safe margins"
 CAPTION_MAX_CHARS = 40
-TRANSITION_SECONDS = 0.5
+# Full-bleed style (2026-11-21): straight cuts, no transition
+# gaps — the old 0.5s black-gap / cross-dissolve layout is gone.
+TRANSITION_SECONDS = 0.0
 
 
 def transition_for(moment: MomentPlanInput) -> str:
-    """Transition into this moment's clip, from its measured motion.
+    """Transition into this moment's clip.
 
-    A high-motion segment cuts hard; a calmer one dissolves, so
-    the cut does not jar. The rule is deterministic and recorded
-    per clip, not chosen per clip by taste.
+    Full-bleed style: every cut is a straight cut, whatever the
+    measured motion — the reference videos cut straight between
+    clips, with no dissolve and no black gap. The rule is
+    deterministic and recorded per clip, not chosen per clip by
+    taste.
     """
-    if moment.mean_motion >= 8.0 or moment.event_type == "high_motion_segment":
-        return "hard cut"
-    return f"cross-dissolve ({TRANSITION_SECONDS:.1f}s)"
+    return "straight cut"
 
 
 def visual_direction(moment: MomentPlanInput) -> dict:
@@ -87,6 +89,7 @@ def overall_visual_direction(moments: list[MomentPlanInput]) -> dict:
                          "no licensed SFX library is configured in this environment.",
         "attribution_display": "Show the attribution for every clip whose licence "
                                "requires it, in the lower third at the end of its segment; "
-                               "include the full credits in the outro.",
+                               "there is no outro card — the full credits live in the "
+                               "render manifest and the video description.",
         "per_moment": [visual_direction(m) for m in moments],
     }

@@ -14,8 +14,9 @@ What it cannot do: tell a narration voice from source-clip
 audio by listening — there is no speech-recognition model
 configured. Whether narration audio exists at all is therefore
 checked against the production manifest (narration status
-``not_generated_no_tts_provider`` means no voice was ever
-rendered), and the measured silence is the corroborating
+``not_generated_voiceover_off_fullbleed_style`` means no voice
+was ever rendered — the voiceover is off by design in the
+full-bleed style), and the measured silence is the corroborating
 evidence. Music balance / ducking can only be checked when a
 music track was mixed in; with no licensed music configured,
 the check records that music is absent rather than claiming a

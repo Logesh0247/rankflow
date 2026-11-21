@@ -412,7 +412,7 @@ def test_audio_clipping_detected(tmp_path):
 
 
 # ---------------------------------------------------------------- Phase 2: content validation
-def _content_inputs(engine, job_id, seeded, *, moment_seconds=6.0, total=39.0):
+def _content_inputs(engine, job_id, seeded, *, moment_seconds=6.0, total=30.0):
     clips, moments = _clips_and_moments(seeded, moment_seconds=moment_seconds)
     return {"clips": clips, "moments": moments, "ranking": _ranking(seeded),
             "edl_total_seconds": total, "rendered_duration_seconds": total,
@@ -540,18 +540,20 @@ def pass_job(engine, tmp_path_factory):
     """A job with a crafted, valid render: 1080x1920 testsrc2 with
     tone audio, manifest saying narration was generated and music
     is included. The crafted way to reach PASSED; a real render
-    with a generated narration voice reaches it the same way (see
-    the stubbed-narration test in test_production.py)."""
+    with a generated narration voice would reach it the same way,
+    but the full-bleed style has the voiceover off by design, so
+    no real render passes on narration (see the voiceover-off
+    test in test_production.py)."""
     tmp = tmp_path_factory.mktemp("qa-pass")
     job = _new_job(engine)
     _seed_ranked_five(engine, job.id)
     creative = CreativeDirectorService(engine, _settings())
     edl = creative.get_edl(job.id)
     tone = _tone_wav(tmp / "tone.wav")
-    video = _ffmpeg_video(tmp / "rankflow-short.mp4", duration=39.0)
+    video = _ffmpeg_video(tmp / "rankflow-short.mp4", duration=30.0)
     manifest = _craft_manifest(engine, job.id, edl.edl, music_file=tone, sfx_file=tone)
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    _insert_rendered(engine, job.id, edl.id, video, 39.0)
+    _insert_rendered(engine, job.id, edl.id, video, 30.0)
     return job.id
 
 
@@ -570,13 +572,15 @@ def test_service_passes_crafted_render(engine, pass_job):
 
 @pytest.fixture(scope="session")
 def prod_job(engine, tmp_path_factory):
-    """A job rendered by the real ProductionService (2s moments,
-    ~19s Short). TTS is disabled for this fixture, so QA must say
-    needs_review — narration missing, audio effectively silent —
-    never pass."""
+    """A job rendered by the real ProductionService (3s moments,
+    ~15s Short). The voiceover is off by design in the full-bleed
+    style, so QA must say needs_review — narration missing, audio
+    effectively silent — never pass. (2s moments would make a 10s
+    timeline, which cannot fit the 27-word hook + closing alone,
+    so the Creative Director rightly refuses the plan.)"""
     tmp = tmp_path_factory.mktemp("qa-prod")
     job = _new_job(engine)
-    seeded = _seed_ranked_five(engine, job.id, moment_seconds=2.0)
+    seeded = _seed_ranked_five(engine, job.id, moment_seconds=3.0)
     colours = [(40, 160, 40), (40, 40, 180), (40, 200, 220), (120, 40, 20), (140, 140, 140)]
     footage = {}
     for rank, (candidate_id, _) in seeded.items():
@@ -621,10 +625,10 @@ def test_executor_raises_on_failed_qa(engine, tmp_path_factory):
     creative = CreativeDirectorService(engine, _settings())
     edl = creative.get_edl(job.id)
     tone = _tone_wav(tmp / "tone.wav")
-    video = _ffmpeg_video(tmp / "small.mp4", width=720, height=1280, duration=39.0)
+    video = _ffmpeg_video(tmp / "small.mp4", width=720, height=1280, duration=30.0)
     manifest = _craft_manifest(engine, job.id, edl.edl, music_file=tone, sfx_file=tone)
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    _insert_rendered(engine, job.id, edl.id, video, 39.0)
+    _insert_rendered(engine, job.id, edl.id, video, 30.0)
     executor = make_quality_assurance_executor(engine, _settings())
     from datetime import datetime, timezone
     task = OrchestratorTask(

@@ -48,9 +48,9 @@ def compute_vertical_crop(source_width: int, source_height: int,
                           target_aspect: float = TARGET_ASPECT) -> CropWindow:
     """Crop window that turns the source aspect into `target_aspect`.
 
-    Default target is 9:16 (1080x1920). The Rankter layout crops
-    to the video-area aspect instead (1080x1190) — the same
-    subject-aware rule, a different target rectangle.
+    Default target is 9:16 (1080x1920) — the full-bleed style
+    fills the whole frame, so clips are reframed to the full
+    frame aspect, not to a smaller video area.
 
     Wide source (aspect > target): crop the width, keep full height.
     Tall source (aspect < target): crop the height, keep full width.
@@ -102,10 +102,10 @@ def reframe_filter(source_width: int, source_height: int,
                    target_height: int = TARGET_HEIGHT) -> tuple[str, CropWindow]:
     """FFmpeg filter chain for one clip: crop -> scale -> fps.
 
-    Scales to `target_width`x`target_height` (default 1080x1920;
-    the Rankter layout reframes clips to 1080x1190, the video
-    area of the frame). Returns (filter_string, crop_window).
-    The caller appends format / overlay filters after this.
+    Scales to `target_width`x`target_height` (default 1080x1920,
+    the full frame in the full-bleed style). Returns
+    (filter_string, crop_window). The caller appends format /
+    overlay filters after this.
     """
     window = compute_vertical_crop(
         source_width, source_height, subject_x=subject_x, subject_y=subject_y,

@@ -249,8 +249,9 @@ def test_service_builds_countdown_storyboard_and_edl(engine):
     assert report.narration_script.startswith(report.hook["text"])
     assert "That is number one" in report.narration_script
     assert report.narration_estimated_seconds <= report.total_duration_seconds + 2.0
-    # Timeline: intro 3 + five 6s clips + outro 3 + six 0.5s transitions = 42s.
-    assert report.total_duration_seconds == pytest.approx(3 + 30 + 3 + 6 * 0.5)
+    # Timeline (full-bleed style): five 6s clips only, no intro/outro
+    # cards and no transition gaps = 30s.
+    assert report.total_duration_seconds == pytest.approx(30)
     # EDL: five clips, #5 first, verified timestamps, 1080x1920 @ 30fps.
     assert len(report.edl["clips"]) == 5
     assert [c["rank"] for c in report.edl["clips"]] == [5, 4, 3, 2, 1]
@@ -492,7 +493,7 @@ def test_api_creative_director_endpoints(engine):
         assert edl["output_width"] == 1080 and edl["output_height"] == 1920
         creative = client.get(f"/jobs/{job.id}/creative").json()
         assert creative["storyboard_id"] == storyboard["id"]
-        assert creative["total_duration_seconds"] == pytest.approx(3 + 30 + 3 + 6 * 0.5)
+        assert creative["total_duration_seconds"] == pytest.approx(30)
         assert client.get("/jobs/no-such-job/storyboard").status_code == 404
         assert client.get("/jobs/no-such-job/narration").status_code == 404
         assert client.get("/jobs/no-such-job/edl").status_code == 404
