@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     # that provider (never faked), exactly like YouTube.
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    # Vimeo discovery (added 2026-11-21): Creative Commons only,
+    # downloadable only. Free personal access token from a Vimeo
+    # app (developer.vimeo.com/apps — create an app, generate a
+    # personal access token with the `public`, `private` and
+    # `video_files` scopes; no card). An empty token disables the
+    # provider (never faked), exactly like YouTube. Wikimedia
+    # Commons needs no key at all, so it has no setting here.
+    vimeo_access_token: str = ""
     # Narration TTS (Edge TTS — added after Prompt 12, user-approved).
     # edge-tts is a free, unofficial client of Microsoft's Edge
     # neural-voice endpoint: no API key, no account, no per-character
@@ -108,7 +116,7 @@ class Settings(BaseSettings):
     # YOUTUBE_API_KEY fails per query and the run falls back to the
     # next provider, with the failure noted in the report — YouTube
     # results are never faked.
-    research_provider: Literal["internet_archive", "youtube", "pexels", "pixabay", "test"] = "internet_archive"
+    research_provider: Literal["internet_archive", "youtube", "pexels", "pixabay", "vimeo", "wikimedia_commons", "test"] = "internet_archive"
     research_providers: str = ""
     research_max_candidates: int = 10
     research_timeout_seconds: float = 15.0
@@ -177,6 +185,19 @@ class Settings(BaseSettings):
     footage_download_timeout_seconds: float = 300.0
     footage_metadata_timeout_seconds: float = 15.0
     footage_ytdlp_path: str = "yt-dlp"
+    # Vid Kraken YouTube downloader (added 2026-11-21, user-chosen).
+    # Managed YouTube download API: POST /api/v2/download, poll
+    # GET /api/v2/download/{jobId} until COMPLETED, then stream
+    # the returned downloadUrl. No cookies/proxies — it fixes the
+    # Render yt-dlp sign-in block. Auth is `Authorization: Bearer
+    # <key>` (vidkraken.com/llms.txt). Free trial: 10 downloads,
+    # no card; then bandwidth-only pricing. An empty key disables
+    # Vid Kraken (never faked) and YouTube falls back to yt-dlp.
+    # Used ONLY for approved CC / owned YouTube videos — Rights
+    # still approves first, and Vid Kraken never bypasses Rights.
+    vidkraken_api_key: str = ""
+    vidkraken_poll_interval_seconds: float = 3.0
+    vidkraken_poll_timeout_seconds: float = 300.0
 
     # Ranking Agent (Prompt 06). Scores are editorial heuristics
     # from the measured frame signals (scorer

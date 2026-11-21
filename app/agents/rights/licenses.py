@@ -90,6 +90,13 @@ def _catalogue() -> dict[str, LicenceInfo]:
                                             commercial=False, modification=True, share_alike=True)
         out[f"cc-by-nc-nd-{version}"] = _cc(version, "Attribution-NonCommercial-NoDerivatives", "by-nc-nd",
                                             commercial=False, modification=False)
+    # Vimeo (CC only, downloadable only) and Wikimedia Commons
+    # (CC BY / CC BY-SA / CC0 / public domain) use these same CC
+    # catalogue entries — no separate entries are needed, because
+    # both providers record the provider-published CC licence URL
+    # verbatim and parse_licence below resolves it to the entry
+    # here. NC/ND variants are in the catalogue too, so Rights
+    # rejects them for forbidding commercial use / derivatives.
     out["cc0-1.0"] = LicenceInfo(
         key="cc0-1.0", name="CC0 1.0 Universal (Public Domain Dedication)",
         url="https://creativecommons.org/publicdomain/zero/1.0/",

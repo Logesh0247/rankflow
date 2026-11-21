@@ -21,6 +21,7 @@ orchestrator as a validated `ResearchOutput`.
 | `tests/test_youtube.py` | YouTube CC filter, licence mapping, multi-provider, yt-dlp download (24 tests) |
 | `tests/test_duration.py` | Duration preference: boost, cap, unknown kept, enrichment backfill (13 tests) |
 | `tests/test_stock_providers.py` | Pexels / Pixabay search, licences, file selection, direct download (24 tests) |
+| `tests/test_vimeo_wikimedia.py` | Vimeo CC-only / Wikimedia Commons search, licence filtering, file selection, direct download |
 
 ## Providers (verified 2026-11-20, this VM; YouTube wired after Prompt 12)
 
@@ -30,6 +31,8 @@ orchestrator as a validated `ResearchOutput`.
 | `youtube` | **Creative Commons only, needs a key** | YouTube Data API v3. Search is filtered to `videoLicense=creativeCommon` and each video's `status.license` is fetched: YouTube's only CC option is CC BY 3.0, so a `creativeCommon` video is recorded with the CC BY 3.0 licence URL and Rights can approve it; a standard-licence video is recorded as such and Rights rejects it. Needs `YOUTUBE_API_KEY`; without it, `search()` raises `ProviderUnavailable` — results are never fabricated. Free quota is 10,000 units/day (one search = 100 units, ≈ 100 searches/day). **Unverified live on this VM**: the egress proxy blocks googleapis.com and youtube.com, so live verification must happen on the deploy host. |
 | `pexels` | **Needs a free key (no card)** | Pexels video search (`api.pexels.com/videos/search`, bare `Authorization: <key>` header, 200 requests/hour). Free key at pexels.com/api. Every video is released under the Pexels License (free commercial use, modification, redistribution, no attribution required) — the provider records the platform licence URL and Rights approves it. Short clips with durations. Pexels publishes no title: the title is derived from the landing-page URL slug, or "Pexels video {id}". **Unverified live** (no key configured). |
 | `pixabay` | **Needs a free key (no card)** | Pixabay video search (`pixabay.com/api/videos/`, `key` query param, 100 requests/60 s). Free key at pixabay.com/api/docs. Every video is released under the Pixabay Content License (same permissive terms as Pexels) — the provider records the platform licence URL and Rights approves it. Short clips with durations; `safesearch=true` is sent. Pixabay publishes no title: the title is the provider-published tags. **Unverified live** (no key configured). |
+| `vimeo` | **Creative Commons only, downloadable only, needs a free token** | Vimeo API v3.4 (`api.vimeo.com/videos`, Bearer token). Only CC-licensed videos carrying a direct MP4 download/file link are returned; standard-licence and non-downloadable videos are dropped. Needs `VIMEO_ACCESS_TOKEN` (free personal access token from a Vimeo app, `public`/`private`/`video_files` scopes); without it, `search()` raises `ProviderUnavailable`. Rights approves the CC BY / CC BY-SA / CC0 licences from the existing catalogue. **Unverified live** (no token configured). |
+| `wikimedia_commons` | **Real, no key** | Wikimedia Commons API (`commons.wikimedia.org/w/api.php`, `generator=search`, File namespace, `prop=imageinfo`). Video files only (`video/mp4`, `video/webm`, `video/ogg`), filtered to CC BY / CC BY-SA / CC0 / public-domain licences from `extmetadata` `LicenseShortName` / `LicenseUrl`; NC/ND, GFDL and unknown licences are dropped. Duration from file metadata when published. **Unverified live**. |
 | `test` | **TEST-ONLY** | Deterministic in-memory candidates, `test-only` licence, `example.invalid` URLs. Only when `RESEARCH_PROVIDER=test` or `test` is in `RESEARCH_PROVIDERS`. Never the default. |
 
 Set `RESEARCH_PROVIDERS` (comma list, in search order, e.g.
@@ -49,8 +52,10 @@ Pinterest is discovery-only in the loosest sense and its clips
 are almost never rights-clean — it is not a footage source.
 
 Evaluated and NOT used: Openverse (images + audio only, no video —
-verified live), Wikimedia Commons (mostly stills; inconsistent
-duration/licence metadata).
+verified live 2026-11-20), Mixkit and Coverr (no public search API —
+verified 2026-11-21, so neither can be a provider; both are
+browse-only stock libraries). AFV and Vlipsy are also not providers:
+no public search/download API and no reusable licence for their clips.
 
 A search result is **discovery only**. It is never presented as
 downloadable or reusable — that is the Rights Verification Agent's

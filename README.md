@@ -298,7 +298,13 @@ tests/ docs/ scripts/ config/ main.py requirements.txt .env.example
   Pixabay are free stock-video sources (free keys, no card —
   `PEXELS_API_KEY`, `PIXABAY_API_KEY`); every clip is released
   under the platform licence, so Rights can approve them, and
-  approved clips download as direct MP4 files. Honest limit:
+  approved clips download as direct MP4 files. Vimeo is also a
+  source (Creative Commons only, downloadable only, free
+  `VIMEO_ACCESS_TOKEN`), and Wikimedia Commons is a source with
+  no key (CC BY / CC BY-SA / CC0 / public-domain videos only).
+  Openverse, Mixkit and Coverr are not sources: Openverse has no
+  video endpoint and Mixkit/Coverr have no public search API.
+  Honest limit:
   stock clips are generic/staged footage, not specific viral
   moments. Research prefers short clips: videos under 10 minutes
   get a score boost and videos over `RESEARCH_MAX_CANDIDATE_MINUTES`

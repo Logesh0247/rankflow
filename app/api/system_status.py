@@ -52,6 +52,11 @@ class SettingsStatus(BaseModel):
     youtube_configured: bool
     pexels_configured: bool = False
     pixabay_configured: bool = False
+    vimeo_configured: bool = False
+    # Wikimedia Commons needs no key, so it is configured whenever
+    # the provider is registered (always, in this build).
+    wikimedia_configured: bool = True
+    vidkraken_configured: bool = False
     tts_provider: str
     tts_configured: bool
     tts_voice: str
@@ -94,6 +99,9 @@ def settings_status() -> SettingsStatus:
         youtube_configured=bool(settings.youtube_api_key),
         pexels_configured=bool(settings.pexels_api_key),
         pixabay_configured=bool(settings.pixabay_api_key),
+        vimeo_configured=bool(settings.vimeo_access_token),
+        wikimedia_configured=True,
+        vidkraken_configured=bool(settings.vidkraken_api_key),
         tts_provider=settings.tts_provider or "not configured",
         # Edge TTS needs no API key: configured = enabled + named.
         # Any other provider still needs a key to count as configured.

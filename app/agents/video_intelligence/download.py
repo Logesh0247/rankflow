@@ -15,18 +15,23 @@ What this module does, and its rules:
   `{base}/metadata/{id}`, pick a playable video file (mp4 first,
   then webm, mov, …), stream it to disk and verify it with
   ffprobe (duration > 0) before it is ever analysed. YouTube: an
-  approved CC-licensed video is downloaded with yt-dlp (mp4,
-  `--max-filesize` enforces the per-file cap) and verified the
-  same way. YouTube demands a signed-in browser from some cloud
-  servers (live failure 2026-11-21: every download failed with
-  "--from-browser or --cookies for the authentication"); when
-  yt-dlp fails that way the download is retried with the mobile
-  player clients (`--extractor-args
-  youtube:player_client=android`, then `ios`), which need no
-  account and no cookies and often bypass the check. Which
-  player client succeeded is recorded on the download outcome
-  (`FootageDownload.player_client`). No cookies support exists
-  and no account is ever used. Pexels / Pixabay: approved stock clips are fetched
+  approved CC-licensed video is downloaded with Vid Kraken first
+  when `VIDKRAKEN_API_KEY` is configured (POST /api/v2/download,
+  poll until COMPLETED, stream the returned downloadUrl — no
+  cookies/proxies, which fixes the Render sign-in block), and
+  with yt-dlp otherwise (mp4, `--max-filesize` enforces the
+  per-file cap), verified the same way. YouTube demands a
+  signed-in browser from some cloud servers (live failure
+  2026-11-21: every download failed with "--from-browser or
+  --cookies for the authentication"); when yt-dlp fails that way
+  the download is retried with the mobile player clients
+  (`--extractor-args youtube:player_client=android`, then `ios`),
+  which need no account and no cookies and often bypass the
+  check. Which player client succeeded is recorded on the
+  download outcome (`FootageDownload.player_client`); a Vid
+  Kraken download records its job id (`vidkraken_job_id`). No
+  cookies support exists and no account is ever used. Pexels /
+  Pixabay: approved stock clips are fetched
   by re-querying the provider API for the video id (the search
   response carries no file link), the direct MP4 link is selected
   (Pexels: largest mp4 up to 1920 px wide; Pixabay: medium 1080p
@@ -67,7 +72,10 @@ What this module does, and its rules:
 * A platform with no downloader (TikTok, Facebook, Instagram,
   Pinterest — none of them offers an official search/download
   API) is skipped with a reason saying so. Pexels and Pixabay
-  ARE downloaded (direct MP4 links from their APIs).
+  ARE downloaded (direct MP4 links from their APIs), as are
+  Vimeo (CC only — the video record is re-fetched by id and
+  the MP4 download/file link selected) and Wikimedia Commons
+  (the direct file URL from the Commons API imageinfo).
 
 The HTTP client mirrors the egress-proxy handling in
 `app/agents/research/providers.py` (trust_env=False, proxy from
@@ -87,6 +95,8 @@ import shutil
 import ssl
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -98,6 +108,7 @@ from app.agents.research.providers import (
     VIDEO_EXTENSIONS,
     select_pexels_file,
     select_pixabay_file,
+    select_vimeo_file,
 )
 from app.agents.rights.gate import latest_evidence, require_approved
 from app.agents.video_intelligence.probe import probe_video
@@ -123,6 +134,30 @@ _CHUNK_BYTES = 1024 * 1024  # stream in 1 MB chunks
 # they need no account and no cookies. No cookies support exists
 # anywhere in this module — no account is ever used.
 _YT_PLAYER_CLIENTS = ("web", "android", "ios")
+
+# Vid Kraken (managed YouTube download API, added 2026-11-21).
+# Auth is `Authorization: Bearer <key>` (vidkraken.com/llms.txt).
+# Workflow: POST /api/v2/download {"url", "format": "1080"} ->
+# {"jobId", ...}, then poll GET /api/v2/download/{jobId} until
+# status COMPLETED (IN_QUEUE / IN_PROGRESS in between) and stream
+# the returned downloadUrl. A FAILED job carries a machine-readable
+# errorCode (AGE_RESTRICTED, MEMBERS_ONLY, GEO_RESTRICTED,
+# PRIVATE_VIDEO, DRM_PROTECTED, VIDEO_UNAVAILABLE, VIDEO_NOT_FOUND,
+# ...). Only NETWORK_ERROR is worth resubmitting; the rest are
+# definitive rejections of that video. The API key is sent only to
+# vidkraken.com, never to the file host (the file is streamed with
+# a fresh unauthenticated client). Use only with content the user
+# has the right to download — Vid Kraken never bypasses Rights.
+VIDKRAKEN_BASE_URL = "https://vidkraken.com"
+VIDKRAKEN_FORMAT = "1080"
+# Definitive Vid Kraken job failures: the video itself cannot be
+# downloaded, so yt-dlp must not be tried to get around them.
+_VIDKRAKEN_DEFINITIVE_ERRORS = frozenset({
+    "AGE_RESTRICTED", "MEMBERS_ONLY", "GEO_RESTRICTED",
+    "PRIVATE_VIDEO", "DRM_PROTECTED", "VIDEO_UNAVAILABLE",
+    "VIDEO_NOT_FOUND", "VIDEO_PROCESSING", "VIDEO_PREMIERE",
+    "LIVE_STREAM_IN_PROGRESS", "NOT_FOUND",
+})
 
 # Substrings (lowercased) of yt-dlp stderr that mean "YouTube is
 # demanding a signed-in browser" — the error seen live on
@@ -189,6 +224,9 @@ class FootageDownload(BaseModel):
     # show whether the sign-in fallback was needed. None for
     # non-YouTube downloads and for failed/skipped attempts.
     player_client: str | None = None
+    # YouTube only: the Vid Kraken job id that produced the file,
+    # when Vid Kraken was the downloader. None otherwise.
+    vidkraken_job_id: str | None = None
 
 
 def _file_size(entry: dict) -> int | None:
@@ -387,12 +425,25 @@ class FootageDownloader:
             result = self._download_stock(job_id, candidate_id,
                                           platform, external_id,
                                           budget_bytes)
+        elif platform in ("vimeo", "wikimedia_commons"):
+            external_id = (candidate.external_video_id or "").strip()
+            if not external_id:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    reason="candidate has no external video id")
+            if platform == "vimeo":
+                result = self._download_vimeo(job_id, candidate_id,
+                                              external_id, budget_bytes)
+            else:
+                result = self._download_wikimedia(job_id, candidate_id,
+                                                  external_id, budget_bytes)
         else:
             return FootageDownload(
                 candidate_video_id=candidate_id, status="skipped",
                 reason=f"source platform {platform or 'unknown'} has no "
                        "downloader configured — only Internet Archive, "
-                       "YouTube (Creative Commons), Pexels and Pixabay "
+                       "YouTube (Creative Commons), Pexels, Pixabay, "
+                       "Vimeo (Creative Commons) and Wikimedia Commons "
                        "footage is downloaded; TikTok, Facebook, "
                        "Instagram and Pinterest offer no official "
                        "search/download API")
@@ -543,6 +594,154 @@ class FootageDownloader:
         return self._ytdlp_runner(cmd,
                                   self.settings.footage_download_timeout_seconds)
 
+    # ------------------------------------------------------------ Vid Kraken (YouTube only)
+    def _vidkraken_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.settings.vidkraken_api_key}",
+                "Accept": "application/json"}
+
+    def _try_vidkraken(self, job_id: str, candidate_id: str,
+                       video_id: str,
+                       budget_bytes: int) -> FootageDownload | None:
+        """Try Vid Kraken for an approved YouTube video.
+
+        Returns None when Vid Kraken was NOT attempted or its
+        service failed in a way yt-dlp may still succeed — no
+        key configured, submit HTTP/network error, poll HTTP
+        error, or poll timeout — and the caller then falls back
+        to yt-dlp. Returns a FootageDownload for a definitive
+        outcome: downloaded, or the Vid Kraken job FAILED with a
+        machine-readable errorCode (AGE_RESTRICTED, MEMBERS_ONLY,
+        GEO_RESTRICTED, PRIVATE_VIDEO, DRM_PROTECTED,
+        VIDEO_UNAVAILABLE, …). A definitive failure is never
+        retried with yt-dlp: yt-dlp cannot download an
+        age-restricted / private / members-only video either,
+        and trying would be an attempt to get around the
+        restriction. No database session is open during this
+        call: the API is polled and the file streamed first; the
+        caller records it afterwards in a short session. The
+        API key is sent only to vidkraken.com, never to the file
+        host. The submit carries an Idempotency-Key so a
+        retried submit cannot start (and bill) a second job.
+        """
+        if not self.settings.vidkraken_api_key:
+            return None
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        submit_url = f"{VIDKRAKEN_BASE_URL}/api/v2/download"
+        headers = dict(self._vidkraken_headers())
+        headers["Idempotency-Key"] = uuid.uuid4().hex
+        try:
+            with self._client_factory(
+                    self.settings.footage_metadata_timeout_seconds,
+                    submit_url) as client:
+                response = client.post(
+                    submit_url,
+                    json={"url": url, "format": VIDKRAKEN_FORMAT},
+                    headers=headers)
+                response.raise_for_status()
+                submitted = response.json()
+        except Exception:  # noqa: BLE001 — service failure: fall back to yt-dlp
+            return None
+        if not isinstance(submitted, dict):
+            return None
+        job_id_vk = str(submitted.get("jobId") or submitted.get("job_id") or "").strip()
+        # A submit that already reports COMPLETED carries the link.
+        status = str(submitted.get("status") or "").upper()
+        if status == "COMPLETED":
+            download_url = str(submitted.get("downloadUrl")
+                               or submitted.get("download_url") or "").strip()
+            if not download_url:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url, vidkraken_job_id=job_id_vk or None,
+                    reason="Vid Kraken reported COMPLETED but returned "
+                           "no downloadUrl")
+            return self._vidkraken_stream(job_id, candidate_id, video_id,
+                                          download_url, job_id_vk,
+                                          budget_bytes)
+        if not job_id_vk:
+            return None
+        deadline = time.monotonic() + max(
+            0.0, float(self.settings.vidkraken_poll_timeout_seconds))
+        poll_url = f"{VIDKRAKEN_BASE_URL}/api/v2/download/{job_id_vk}"
+        while True:
+            try:
+                with self._client_factory(
+                        self.settings.footage_metadata_timeout_seconds,
+                        poll_url) as client:
+                    response = client.get(poll_url,
+                                          headers=self._vidkraken_headers())
+                    response.raise_for_status()
+                    state = response.json()
+            except Exception:  # noqa: BLE001 — poll failure: fall back to yt-dlp
+                return None
+            if not isinstance(state, dict):
+                return None
+            status = str(state.get("status") or "").upper()
+            if status == "COMPLETED":
+                download_url = str(state.get("downloadUrl")
+                                   or state.get("download_url") or "").strip()
+                if not download_url:
+                    return FootageDownload(
+                        candidate_video_id=candidate_id, status="failed",
+                        source_url=url, vidkraken_job_id=job_id_vk,
+                        reason="Vid Kraken reported COMPLETED but returned "
+                               "no downloadUrl")
+                return self._vidkraken_stream(job_id, candidate_id, video_id,
+                                              download_url, job_id_vk,
+                                              budget_bytes)
+            if status == "FAILED":
+                error_code = str(state.get("errorCode")
+                                 or state.get("error_code") or "FAILED")
+                message = str(state.get("message") or state.get("error") or "")
+                reason = f"Vid Kraken download failed: {error_code}"
+                if message and message != error_code:
+                    reason += f" — {message}"
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url, vidkraken_job_id=job_id_vk,
+                    reason=reason)
+            if status not in ("IN_QUEUE", "IN_PROGRESS", "QUEUED", "PROCESSING", ""):
+                # An unknown terminal-looking status: do not guess —
+                # treat it as a definitive failure, not a success.
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url, vidkraken_job_id=job_id_vk,
+                    reason=f"Vid Kraken download ended with unexpected "
+                           f"status {status!r}")
+            if time.monotonic() >= deadline:
+                return None  # poll timeout: fall back to yt-dlp
+            interval = max(0.0, float(self.settings.vidkraken_poll_interval_seconds))
+            if interval:
+                time.sleep(interval)
+
+    def _vidkraken_stream(self, job_id: str, candidate_id: str,
+                          video_id: str, download_url: str,
+                          job_id_vk: str,
+                          budget_bytes: int) -> FootageDownload:
+        """Stream a Vid Kraken COMPLETED downloadUrl to local storage."""
+        base_name = Path(urlparse(download_url).path).name
+        if Path(base_name).suffix.lower() not in VIDEO_EXTENSIONS:
+            base_name = f"{video_id}.mp4"
+        result = self._download_direct_file(job_id, candidate_id,
+                                            download_url, base_name,
+                                            budget_bytes)
+        if result.status != "downloaded":
+            return FootageDownload(
+                candidate_video_id=result.candidate_video_id,
+                status=result.status, source_url=result.source_url,
+                local_path=result.local_path,
+                bytes_downloaded=result.bytes_downloaded,
+                duration_seconds=result.duration_seconds,
+                reason=result.reason, vidkraken_job_id=job_id_vk)
+        return FootageDownload(
+            candidate_video_id=result.candidate_video_id,
+            status="downloaded", source_url=result.source_url,
+            local_path=result.local_path,
+            bytes_downloaded=result.bytes_downloaded,
+            duration_seconds=result.duration_seconds,
+            reason=f"{result.reason} via Vid Kraken",
+            vidkraken_job_id=job_id_vk)
+
     def _download_youtube(self, job_id: str, candidate_id: str,
                           video_id: str,
                           budget_bytes: int) -> FootageDownload:
@@ -585,6 +784,17 @@ class FootageDownloader:
                 candidate_video_id=candidate_id, status="skipped",
                 reason="no download budget left for this job "
                        f"(per-job cap {self.settings.footage_total_max_mb:.0f} MB)")
+        # Vid Kraken first, when a key is configured: it downloads
+        # on Vid Kraken's servers with no cookies/proxies, so it
+        # fixes the Render yt-dlp sign-in block. A definitive Vid
+        # Kraken failure (job FAILED with an errorCode) is returned
+        # directly, never retried with yt-dlp. When Vid Kraken is
+        # not configured, or its service fails / times out, fall
+        # through to yt-dlp below.
+        vidkraken_result = self._try_vidkraken(job_id, candidate_id,
+                                               video_id, budget_bytes)
+        if vidkraken_result is not None:
+            return vidkraken_result
         prefix = self._resolve_ytdlp()
         if prefix is None:
             return FootageDownload(
@@ -796,6 +1006,175 @@ class FootageDownloader:
             reason=f"downloaded {base_name} "
                    f"({written / 1024 / 1024:.1f} MB, "
                    f"{probe.duration_seconds:.1f}s)")
+
+    # ------------------------------------------------------------ Vimeo / Wikimedia flow
+    def _download_direct_file(self, job_id: str, candidate_id: str,
+                              source_url: str, file_name: str,
+                              budget_bytes: int) -> FootageDownload:
+        """Stream a direct file URL to local storage and verify it.
+
+        Shared by the Vimeo and Wikimedia downloaders. No database
+        session is open during this call: the file is streamed and
+        verified first; the caller records it afterwards in a short
+        session. The per-file / per-job caps are enforced while
+        streaming, exactly as for Archive / stock downloads.
+        """
+        settings = self.settings
+        limit = min(int(settings.footage_max_mb * 1024 * 1024),
+                    budget_bytes)
+        if limit <= 0:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="skipped",
+                source_url=source_url,
+                reason="no download budget left for this job "
+                       f"(per-job cap {settings.footage_total_max_mb:.0f} MB)")
+        if not file_name or file_name in (".", ".."):
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=source_url,
+                reason=f"unsafe file name in download link: {source_url!r}")
+        rel = f"jobs/{job_id}/footage/{candidate_id}/{file_name}"
+        try:
+            target = safe_join(self.storage.root, rel)
+        except ValidationError as exc:
+            return FootageDownload(candidate_video_id=candidate_id,
+                                   status="failed", source_url=source_url,
+                                   reason=str(exc))
+        try:
+            written = self._stream_to_file(source_url, target, limit)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=source_url,
+                reason=f"download failed: {exc}")
+        try:
+            probe = probe_video(target, ffprobe_path=settings.ffprobe_path)
+        except (StorageError, ValidationError) as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=source_url,
+                reason=f"downloaded file failed ffprobe verification: {exc}")
+        return FootageDownload(
+            candidate_video_id=candidate_id, status="downloaded",
+            source_url=source_url, local_path=str(target),
+            bytes_downloaded=written,
+            duration_seconds=probe.duration_seconds,
+            reason=f"downloaded {file_name} "
+                   f"({written / 1024 / 1024:.1f} MB, "
+                   f"{probe.duration_seconds:.1f}s)")
+
+    def _download_vimeo(self, job_id: str, candidate_id: str,
+                        video_id: str,
+                        budget_bytes: int) -> FootageDownload:
+        """Download an approved CC Vimeo video via its API file link.
+
+        The search response's download link is a time-limited
+        redirect, so the video record is re-fetched by id from
+        the Vimeo API (the same re-fetch pattern as Pexels /
+        Pixabay) and the direct MP4 link is selected from that
+        fresh record. The Rights gate was already re-checked in
+        `download_candidate`, so reaching here means Rights
+        approved this video on a Creative Commons licence.
+        """
+        settings = self.settings
+        token = settings.vimeo_access_token
+        if not token:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason="VIMEO_ACCESS_TOKEN is not configured — the clip "
+                       "cannot be re-fetched for download")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", video_id):
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"unsafe Vimeo video id: {video_id!r}")
+        detail_url = f"https://api.vimeo.com/videos/{video_id}"
+        headers = {"Authorization": f"Bearer {token}",
+                   "Accept": "application/vnd.vimeo.*+json;version=3.4"}
+        try:
+            with self._client_factory(settings.footage_metadata_timeout_seconds,
+                                      detail_url) as client:
+                response = client.get(detail_url, headers=headers,
+                                      params={"fields": "download,files"})
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"vimeo video lookup failed: HTTP "
+                       f"{exc.response.status_code} for id {video_id!r}")
+        except Exception as exc:  # noqa: BLE001 — network/JSON, reported not raised
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"vimeo video lookup failed for id "
+                       f"{video_id!r}: {exc}")
+        file_url = select_vimeo_file(data if isinstance(data, dict) else None)
+        if not file_url:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"vimeo returned no downloadable MP4 file "
+                       f"for id {video_id!r}")
+        base_name = Path(urlparse(file_url).path).name
+        if Path(base_name).suffix.lower() not in VIDEO_EXTENSIONS:
+            base_name = f"{video_id}.mp4"
+        return self._download_direct_file(job_id, candidate_id, file_url,
+                                          base_name, budget_bytes)
+
+    def _download_wikimedia(self, job_id: str, candidate_id: str,
+                            file_title: str,
+                            budget_bytes: int) -> FootageDownload:
+        """Download an approved Wikimedia Commons video file.
+
+        The file is re-fetched by title from the Commons API
+        (``action=query&titles=File:…&prop=imageinfo``) and the
+        direct file URL from ``imageinfo`` is streamed — the same
+        re-fetch pattern as Pexels / Pixabay. The Rights gate was
+        already re-checked in `download_candidate`, so reaching
+        here means Rights approved this file on a CC BY / CC BY-SA
+        / CC0 / public-domain licence.
+        """
+        settings = self.settings
+        api_url = "https://commons.wikimedia.org/w/api.php"
+        params = {"action": "query", "format": "json", "formatversion": "2",
+                  "titles": file_title, "prop": "imageinfo",
+                  "iiprop": "url|mime"}
+        try:
+            with self._client_factory(settings.footage_metadata_timeout_seconds,
+                                      api_url) as client:
+                response = client.get(api_url, params=params)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"wikimedia file lookup failed: HTTP "
+                       f"{exc.response.status_code} for {file_title!r}")
+        except Exception as exc:  # noqa: BLE001 — network/JSON, reported not raised
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"wikimedia file lookup failed for "
+                       f"{file_title!r}: {exc}")
+        pages = (data.get("query", {}) or {}).get("pages") or []
+        if isinstance(pages, dict):
+            pages = list(pages.values())
+        info = {}
+        if isinstance(pages, list) and pages:
+            imageinfo = pages[0].get("imageinfo") or []
+            if isinstance(imageinfo, list) and imageinfo:
+                info = imageinfo[0] if isinstance(imageinfo[0], dict) else {}
+        file_url = str(info.get("url") or "").strip()
+        mime = str(info.get("mime") or "").strip().lower()
+        if not file_url or mime not in ("video/mp4", "video/webm", "video/ogg"):
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"wikimedia returned no downloadable video file "
+                       f"for {file_title!r}")
+        base_name = Path(urlparse(file_url).path).name
+        if Path(base_name).suffix.lower() not in VIDEO_EXTENSIONS:
+            base_name = f"{file_title.replace(' ', '_')}.mp4"
+        return self._download_direct_file(job_id, candidate_id, file_url,
+                                          base_name, budget_bytes)
 
     def _stream_to_file(self, url: str, target: Path, limit_bytes: int) -> int:
         """Stream a URL to `target`, aborting over the byte limit.

@@ -46,6 +46,27 @@ Real vs test providers (verified 2026-11-20, this VM)
   metadata, never invented. UNVERIFIED LIVE on this VM (no keys
   configured); live verification must happen on the deploy host
   once the keys are set.
+* ``vimeo`` — Creative Commons only, downloadable only, needs a
+  free access token. Vimeo API v3.4 (``GET api.vimeo.com/videos``,
+  Bearer token). Only videos whose published licence is a Creative
+  Commons licence AND whose API record carries a direct MP4
+  download/file link are returned; a standard-licence video, a
+  video with no CC licence, and a non-downloadable video are
+  dropped, never presented as usable. Rights approves the
+  returned CC BY / CC BY-SA / CC0 licences from the existing
+  catalogue (NC/ND variants are returned and Rights rejects
+  them). UNVERIFIED LIVE on this VM (no token configured); live
+  verification must happen on the deploy host.
+* ``wikimedia_commons`` — REAL, no key. Wikimedia Commons API
+  (``commons.wikimedia.org/w/api.php``, ``generator=search``,
+  namespace 6, ``prop=imageinfo``). Video files only
+  (``video/mp4``, ``video/webm``, ``video/ogg``) whose published
+  licence (``extmetadata`` ``LicenseShortName`` / ``LicenseUrl``)
+  is CC BY, CC BY-SA, CC0 or public domain; NC/ND, GFDL and
+  unknown/missing licences are dropped. Duration is taken from
+  the file metadata when the API publishes it, else None.
+  UNVERIFIED LIVE on this VM; live verification must happen on
+  the deploy host.
 * ``test`` — TEST-ONLY deterministic provider. In-memory candidates
   derived from the query, labelled ``test-only`` in the licence field
   and served from ``example.invalid`` URLs. Used only when
@@ -53,8 +74,9 @@ Real vs test providers (verified 2026-11-20, this VM)
   integration). Never the default, never presented as real sources.
 
 Evaluated and NOT used: Openverse (images + audio only, no video
-endpoint — verified live), Wikimedia Commons (mostly still images;
-video search exists but duration / licence metadata is inconsistent).
+endpoint — verified live 2026-11-20), Mixkit and Coverr (no public
+search API — verified 2026-11-21, so neither can be a provider;
+both are browse-only stock libraries).
 
 Environment quirk (documented, not hidden): outbound traffic in
 this VM goes through an egress proxy that MITMs TLS with a
@@ -68,6 +90,7 @@ verification: certificates are still verified, never disabled.
 """
 from __future__ import annotations
 
+import html
 import os
 import re
 import ssl
@@ -553,6 +576,397 @@ class PixabayProvider:
             raw=dict(hit))
 
 
+# ------------------------------------------------------------------ Vimeo (CC only, downloadable only)
+# Vimeo API v3.4: GET https://api.vimeo.com/videos?query=... with a
+# Bearer access token (personal access token from a free Vimeo app,
+# with the `public`, `private` and `video_files` scopes — the
+# download/file links are only returned for a token with the
+# `video_files` scope). Only videos whose published licence is a
+# Creative Commons licence AND whose API record carries a direct
+# MP4 download/file link are returned. A standard-licence video, a
+# video with no CC licence, and a non-downloadable video are
+# dropped, never presented as usable. Rights approves the returned
+# CC BY / CC BY-SA / CC0 licences from the existing catalogue;
+# NC/ND variants are returned (they are CC) and Rights rejects
+# them for forbidding commercial use / derivatives. The licence
+# string is never invented: it is the provider-published licence
+# URL when the API publishes one, else the canonical URL for the
+# provider-published CC short name. Download links are
+# time-limited redirects in the real API, so the selected link is
+# recorded in `raw["download_url"]` for audit and the downloader
+# re-fetches the video record by id at download time (the same
+# re-fetch pattern as Pexels / Pixabay).
+_CC_URL_RE = re.compile(
+    r"https?://creativecommons\.org/(?:licenses|publicdomain)/[^\s\"']+", re.IGNORECASE)
+_CC_SHORT_RE = re.compile(
+    r"\bcc\s*0\b|\bcc\s*by(?:[\s\-]*(nc|nd|sa))?(?:[\s\-]*(\d+\.\d+))?", re.IGNORECASE)
+
+
+def _vimeo_licence_url(item: dict) -> str | None:
+    """The CC licence URL for a Vimeo video record, or None.
+
+    Returns None for a standard / all-rights-reserved video, a
+    video with no licence field, and any licence that is not a
+    Creative Commons licence. A CC URL published by the API is
+    returned verbatim; a CC short name (e.g. "CC BY 4.0") maps to
+    its canonical creativecommons.org URL.
+    """
+    raw_values: list[str] = []
+    licence = item.get("license")
+    if isinstance(licence, str):
+        raw_values.append(licence)
+    elif isinstance(licence, dict):
+        for key in ("url", "link", "name", "type", "value"):
+            value = licence.get(key)
+            if isinstance(value, str):
+                raw_values.append(value)
+    for key in ("license_url", "creative_commons"):
+        value = item.get(key)
+        if isinstance(value, str):
+            raw_values.append(value)
+    for value in raw_values:
+        match = _CC_URL_RE.search(value)
+        if match:
+            # Return the published URL verbatim, trailing slash
+            # included — Rights parses it by exact catalogue URL.
+            return match.group(0)
+    for value in raw_values:
+        match = _CC_SHORT_RE.search(value)
+        if not match:
+            continue
+        text = value.lower()
+        if "cc0" in text or "cc 0" in text:
+            return "https://creativecommons.org/publicdomain/zero/1.0/"
+        variant = "by"
+        if match.group(1):
+            variant = f"by-{match.group(1).lower()}"
+        version = match.group(2) or "4.0"
+        return f"https://creativecommons.org/licenses/{variant}/{version}/"
+    return None
+
+
+def select_vimeo_file(video: dict | None) -> str | None:
+    """Pick the direct MP4 file link from a Vimeo video record.
+
+    `download` entries first (expiring download links, with
+    dimensions), then `files` entries (non-expiring file links).
+    MP4 only. Prefer the largest file at most 1920 px wide; if
+    every file is wider, take the smallest of them. Returns the
+    link, or None when no MP4 file is listed.
+    """
+    if not isinstance(video, dict):
+        return None
+    candidates: list[tuple[int, str]] = []
+    for field in ("download", "files"):
+        entries = video.get(field)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            link = str(entry.get("link") or "").strip()
+            if not link:
+                continue
+            file_type = str(entry.get("type") or entry.get("file_type") or "")
+            if file_type and "mp4" not in file_type.lower():
+                continue
+            try:
+                width = int(entry.get("width") or 0)
+            except (TypeError, ValueError):
+                width = 0
+            candidates.append((width, link))
+    if not candidates:
+        return None
+    under = [item for item in candidates if 0 < item[0] <= 1920]
+    if under:
+        return max(under, key=lambda item: item[0])[1]
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+class VimeoProvider:
+    """Vimeo API v3.4, Creative Commons only, downloadable only.
+
+    Disabled without a token: ``search()`` raises
+    ``ProviderUnavailable`` instead of returning anything —
+    results are never fabricated. ``client_factory`` is the test
+    seam, as for YouTube. UNVERIFIED LIVE on this VM (no token
+    configured); live verification must happen on the deploy host.
+    """
+
+    name = "vimeo"
+
+    def __init__(self, access_token: str = "", timeout: float = 15.0,
+                 client_factory=None):
+        self.access_token = access_token
+        self.timeout = timeout
+        self._client_factory = client_factory or _http_client
+
+    def _client(self):
+        return self._client_factory(self.timeout)
+
+    def search(self, query: str, limit: int = 25) -> list[RawCandidate]:
+        if not self.access_token:
+            raise ProviderUnavailable(
+                "vimeo: VIMEO_ACCESS_TOKEN is not configured; "
+                "Vimeo discovery is unavailable, not faked")
+        params = {"query": query,
+                  "per_page": max(1, min(limit, 50)),
+                  "page": 1, "sort": "relevant",
+                  "fields": "uri,name,description,duration,license,"
+                            "download,files,link,created_time,user.name,"
+                            "stats.plays"}
+        headers = {"Authorization": f"Bearer {self.access_token}",
+                   "Accept": "application/vnd.vimeo.*+json;version=3.4"}
+        with self._client() as client:
+            response = client.get("https://api.vimeo.com/videos",
+                                  params=params, headers=headers)
+        response.raise_for_status()
+        out: list[RawCandidate] = []
+        for item in response.json().get("data", []):
+            candidate = self._to_candidate(item)
+            if candidate is not None:
+                out.append(candidate)
+        return out
+
+    @staticmethod
+    def _to_candidate(item: dict) -> RawCandidate | None:
+        if not isinstance(item, dict):
+            return None
+        licence = _vimeo_licence_url(item)
+        if licence is None:
+            return None  # not CC — never presented as usable
+        download_url = select_vimeo_file(item)
+        if download_url is None:
+            return None  # not downloadable — never presented as usable
+        uri = str(item.get("uri") or "").strip()
+        video_id = uri.rstrip("/").rsplit("/", 1)[-1] if uri else ""
+        if not video_id:
+            return None
+        duration = item.get("duration")
+        try:
+            duration_seconds = float(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration_seconds = None
+        user = item.get("user") or {}
+        stats = item.get("stats") or {}
+        plays = stats.get("plays")
+        raw = dict(item)
+        raw["download_url"] = download_url
+        return RawCandidate(
+            platform="vimeo", external_id=video_id,
+            title=_as_text(item.get("name")) or f"Vimeo video {video_id}",
+            creator=_as_text(user.get("name")) if isinstance(user, dict) else None,
+            description=_as_text(item.get("description")),
+            url=item.get("link") or f"https://vimeo.com/{video_id}",
+            duration_seconds=duration_seconds,
+            view_count=int(plays) if isinstance(plays, (int, float)) else None,
+            published_at=_parse_publicdate(item.get("created_time")),
+            licence=licence,
+            raw=raw)
+
+
+# ------------------------------------------------------------------ Wikimedia Commons (no key)
+# Wikimedia Commons API: https://commons.wikimedia.org/w/api.php
+# action=query, generator=search, gsrnamespace=6 (File namespace),
+# prop=imageinfo (iiprop=url|size|mime|extmetadata|timestamp|
+# metadata). Video files only: video/mp4, video/webm, video/ogg.
+# Only files whose published licence (extmetadata LicenseShortName
+# / LicenseUrl) is CC BY, CC BY-SA, CC0 or public domain are
+# returned; CC BY-NC / CC BY-ND, GFDL, copyrighted and
+# unknown/missing licences are dropped. The licence string is the
+# provider-published licence URL when present, else the canonical
+# URL for the provider-published short name — never invented.
+# Duration comes from the file metadata when the API publishes it.
+WIKIMEDIA_VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
+WIKIMEDIA_CC0_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
+WIKIMEDIA_PDM_URL = "https://creativecommons.org/publicdomain/mark/1.0/"
+
+
+def _commons_licence_url(short_name: str | None,
+                         licence_url: str | None) -> str | None:
+    """The licence URL for a Commons file, or None when it is not
+    a usable free licence (NC/ND, GFDL, copyrighted, unknown)."""
+    url = (licence_url or "").strip()
+    if url:
+        lowered = url.lower()
+        if "creativecommons.org/licenses/by-nc" in lowered or \
+                "creativecommons.org/licenses/by-nd" in lowered:
+            return None  # NC/ND are not in the allowed set — drop
+        if "creativecommons.org/licenses/by" in lowered or \
+                "creativecommons.org/publicdomain/zero" in lowered or \
+                "creativecommons.org/publicdomain/mark" in lowered:
+            return url
+    short = (short_name or "").strip()
+    if not short:
+        return None
+    lowered = short.lower()
+    if "by-nc" in lowered or "by-nd" in lowered or \
+            "noncommercial" in lowered or "non-commercial" in lowered or \
+            "no derivatives" in lowered or "no-derivatives" in lowered:
+        return None
+    if "cc0" in lowered or "cc 0" in lowered:
+        return url if "publicdomain/zero" in url.lower() else WIKIMEDIA_CC0_URL
+    if "public domain" in lowered:
+        return url or WIKIMEDIA_PDM_URL
+    if "by-sa" in lowered or "by sa" in lowered:
+        match = re.search(r"(\d+\.\d+)", short)
+        version = match.group(1) if match else "4.0"
+        return f"https://creativecommons.org/licenses/by-sa/{version}/"
+    if re.search(r"\bby\b", lowered):
+        match = re.search(r"(\d+\.\d+)", short)
+        version = match.group(1) if match else "4.0"
+        return f"https://creativecommons.org/licenses/by/{version}/"
+    return None
+
+
+def _commons_duration(info: dict) -> float | None:
+    """Video duration (seconds) from a Commons imageinfo record."""
+    for key in ("duration", "length"):
+        value = info.get(key)
+        try:
+            seconds = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            seconds = None
+        if seconds and seconds > 0:
+            return seconds
+    metadata = info.get("metadata")
+    if isinstance(metadata, list):
+        for entry in metadata:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("name") or "").lower() in ("duration", "length"):
+                try:
+                    seconds = float(entry.get("value") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if seconds > 0:
+                    return seconds
+    return None
+
+
+def _strip_html(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
+    return text or None
+
+
+def _commons_title(page_title: str) -> str:
+    title = page_title
+    if title.startswith("File:"):
+        title = title[len("File:"):]
+    title = title.replace("_", " ")
+    for ext in (".mp4", ".webm", ".ogg", ".ogv"):
+        if title.lower().endswith(ext):
+            title = title[: -len(ext)]
+            break
+    return title.strip() or page_title
+
+
+class WikimediaCommonsProvider:
+    """Wikimedia Commons video search. No key, no account.
+
+    ``GET https://commons.wikimedia.org/w/api.php`` with
+    ``action=query&generator=search`` over the File namespace.
+    ``client_factory`` is the test seam, as for YouTube.
+    UNVERIFIED LIVE on this VM; live verification must happen on
+    the deploy host.
+    """
+
+    name = "wikimedia_commons"
+
+    def __init__(self, timeout: float = 15.0, max_attempts: int = 3,
+                 client_factory=None):
+        self.timeout = timeout
+        self.max_attempts = max(1, max_attempts)
+        self._client_factory = client_factory or _http_client
+
+    def search(self, query: str, limit: int = 25) -> list[RawCandidate]:
+        terms = " ".join(query.split())
+        if not terms:
+            raise ProviderUnavailable(
+                "wikimedia_commons: empty search query")
+        params = {
+            "action": "query", "format": "json", "formatversion": "2",
+            "generator": "search", "gsrsearch": terms,
+            "gsrnamespace": "6",
+            "gsrlimit": max(1, min(limit * 2, 50)),
+            "prop": "imageinfo",
+            "iiprop": "url|size|mime|extmetadata|timestamp|metadata",
+        }
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                with self._client_factory(self.timeout) as client:
+                    response = client.get(
+                        "https://commons.wikimedia.org/w/api.php",
+                        params=params)
+                response.raise_for_status()
+                pages = response.json().get("query", {}).get("pages") or []
+                if isinstance(pages, dict):
+                    pages = list(pages.values())
+                out: list[RawCandidate] = []
+                for page in pages:
+                    candidate = self._to_candidate(page)
+                    if candidate is not None:
+                        out.append(candidate)
+                return out[: max(1, limit)]
+            except Exception as exc:  # noqa: BLE001 — retry, then report
+                last_error = exc
+                if attempt < self.max_attempts:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+        raise ProviderUnavailable(
+            f"wikimedia_commons search failed after {self.max_attempts} "
+            f"attempt(s): {last_error}")
+
+    @staticmethod
+    def _to_candidate(page: dict) -> RawCandidate | None:
+        if not isinstance(page, dict):
+            return None
+        title = str(page.get("title") or "").strip()
+        if not title:
+            return None
+        imageinfo = page.get("imageinfo") or []
+        info = imageinfo[0] if isinstance(imageinfo, list) and imageinfo else {}
+        if not isinstance(info, dict):
+            return None
+        mime = str(info.get("mime") or "").strip().lower()
+        if mime not in WIKIMEDIA_VIDEO_MIMES:
+            return None  # not a video file
+        extmetadata = info.get("extmetadata") or {}
+        if not isinstance(extmetadata, dict):
+            extmetadata = {}
+        short_name = extmetadata.get("LicenseShortName") or {}
+        licence_url_field = extmetadata.get("LicenseUrl") or {}
+        short = short_name.get("value") if isinstance(short_name, dict) else None
+        licence_url = (licence_url_field.get("value")
+                       if isinstance(licence_url_field, dict) else None)
+        licence = _commons_licence_url(short, licence_url)
+        if licence is None:
+            return None  # not a usable free licence
+        download_url = str(info.get("url") or "").strip()
+        if not download_url:
+            return None
+        artist = extmetadata.get("Artist") or {}
+        creator = _strip_html(artist.get("value")) if isinstance(artist, dict) else None
+        if not creator:
+            creator = _as_text(info.get("user"))
+        raw = dict(page)
+        raw["download_url"] = download_url
+        return RawCandidate(
+            platform="wikimedia_commons", external_id=title,
+            title=_commons_title(title),
+            creator=creator,
+            description=None,
+            url=info.get("descriptionurl") or
+                f"https://commons.wikimedia.org/wiki/{title.replace(' ', '_')}",
+            duration_seconds=_commons_duration(info),
+            view_count=None,
+            published_at=_parse_publicdate(info.get("timestamp")),
+            licence=licence,
+            raw=raw)
+
+
 # ------------------------------------------------------------------ TEST-ONLY provider
 class TestProvider:
     """TEST-ONLY deterministic provider.
@@ -591,6 +1005,8 @@ PROVIDER_CLASSES = {
     "youtube": YouTubeProvider,
     "pexels": PexelsProvider,
     "pixabay": PixabayProvider,
+    "vimeo": VimeoProvider,
+    "wikimedia_commons": WikimediaCommonsProvider,
     "test": TestProvider,
 }
 
@@ -609,6 +1025,12 @@ def build_provider(name: str, settings) -> object:
     if name == "pixabay":
         return PixabayProvider(api_key=settings.pixabay_api_key,
                                timeout=settings.research_timeout_seconds)
+    if name == "vimeo":
+        return VimeoProvider(access_token=getattr(settings, "vimeo_access_token", ""),
+                             timeout=settings.research_timeout_seconds)
+    if name == "wikimedia_commons":
+        return WikimediaCommonsProvider(timeout=settings.research_timeout_seconds,
+                                        max_attempts=settings.research_max_attempts)
     if name == "test":
         return TestProvider()
     raise ValueError(f"unknown research provider: {name!r}")

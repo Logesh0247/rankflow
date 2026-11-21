@@ -70,7 +70,18 @@ Download rules (all enforced, all honest):
   then webm, then mov, then the other playable containers;
   within one extension, known sizes first, largest first.
 - **YouTube (Creative Commons only).** An approved YouTube
-  video is downloaded with yt-dlp (`--format
+  video is downloaded with Vid Kraken first when
+  `VIDKRAKEN_API_KEY` is configured: POST
+  `https://vidkraken.com/api/v2/download` (`{"url", "format":
+  "1080"}`, `Authorization: Bearer <key>`, Idempotency-Key),
+  poll `GET /api/v2/download/{jobId}` until COMPLETED, then
+  stream the returned `downloadUrl` — no cookies/proxies, which
+  fixes the Render sign-in block. A job FAILED with a
+  machine-readable `errorCode` (AGE_RESTRICTED, MEMBERS_ONLY,
+  GEO_RESTRICTED, PRIVATE_VIDEO, DRM_PROTECTED,
+  VIDEO_UNAVAILABLE, …) is a definitive failure and is never
+  retried with yt-dlp. When no key is set, or the Vid Kraken
+  service fails / times out, yt-dlp is the fallback (`--format
   bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`,
   `--merge-output-format mp4`, `--max-filesize` enforces the
   per-file cap). Only CC-licensed videos reach the downloader:
@@ -80,7 +91,8 @@ Download rules (all enforced, all honest):
   subprocess with TLS verification left on; it is never run
   with certificate checks disabled. The binary is resolved from
   `FOOTAGE_YTDLP_PATH` on PATH, falling back to
-  `python -m yt_dlp` when the package is importable.
+  `python -m yt_dlp` when the package is importable. Free trial:
+  10 Vid Kraken downloads, no card; then bandwidth-only pricing.
 - **YouTube sign-in fallback.** YouTube demands a signed-in
   browser from some cloud servers — on 2026-11-21 every
   download from Render failed with "--from-browser or
