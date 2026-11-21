@@ -17,7 +17,16 @@ What this module does, and its rules:
   ffprobe (duration > 0) before it is ever analysed. YouTube: an
   approved CC-licensed video is downloaded with yt-dlp (mp4,
   `--max-filesize` enforces the per-file cap) and verified the
-  same way. Pexels / Pixabay: approved stock clips are fetched
+  same way. YouTube demands a signed-in browser from some cloud
+  servers (live failure 2026-11-21: every download failed with
+  "--from-browser or --cookies for the authentication"); when
+  yt-dlp fails that way the download is retried with the mobile
+  player clients (`--extractor-args
+  youtube:player_client=android`, then `ios`), which need no
+  account and no cookies and often bypass the check. Which
+  player client succeeded is recorded on the download outcome
+  (`FootageDownload.player_client`). No cookies support exists
+  and no account is ever used. Pexels / Pixabay: approved stock clips are fetched
   by re-querying the provider API for the video id (the search
   response carries no file link), the direct MP4 link is selected
   (Pexels: largest mp4 up to 1920 px wide; Pixabay: medium 1080p
@@ -106,6 +115,64 @@ _EXT_PRIORITY = {".mp4": 0, ".webm": 1, ".mov": 2, ".mkv": 3,
 
 _CHUNK_BYTES = 1024 * 1024  # stream in 1 MB chunks
 
+# YouTube player clients, tried in order when a download fails.
+# "web" is the default yt-dlp client (no extractor args, exactly
+# the command used before the fallback existed). YouTube demands
+# a signed-in browser from some cloud servers; the mobile player
+# clients ("android", then "ios") often bypass that check, and
+# they need no account and no cookies. No cookies support exists
+# anywhere in this module — no account is ever used.
+_YT_PLAYER_CLIENTS = ("web", "android", "ios")
+
+# Substrings (lowercased) of yt-dlp stderr that mean "YouTube is
+# demanding a signed-in browser" — the error seen live on
+# 2026-11-21 ("--from-browser or --cookies for the
+# authentication", "Sign in to confirm you're not a bot"). Only
+# these trigger the player-client fallback; any other failure
+# (video unavailable, over the size cap, network error) does not.
+_YT_AUTH_ERROR_MARKERS = (
+    "sign in to confirm",
+    "confirm your age",
+    "--cookies",
+    "from-browser",
+    "cookies for the authentication",
+    "login required",
+)
+
+
+def _is_youtube_auth_error(stderr: str) -> bool:
+    """True when yt-dlp failed because YouTube demanded a signed-in
+    browser, as opposed to any other failure."""
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _YT_AUTH_ERROR_MARKERS)
+
+
+def _part_path(target: Path) -> Path:
+    """yt-dlp's partial-download file for a target output path."""
+    return target.with_name(target.name + ".part")
+
+
+def _remove_partials(target: Path, video_id: str) -> None:
+    """Remove a failed attempt's partial output: the target itself,
+    its `.part` file, and any `video_id.*.part` fragments yt-dlp
+    left in the same directory, so a retry starts clean."""
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        _part_path(target).unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        for fragment in target.parent.glob(f"{video_id}.*.part"):
+            try:
+                fragment.unlink(missing_ok=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
 
 class FootageDownload(BaseModel):
     """The outcome of one footage-download attempt."""
@@ -117,6 +184,11 @@ class FootageDownload(BaseModel):
     bytes_downloaded: int = 0
     duration_seconds: float | None = None
     reason: str | None = None
+    # YouTube only: which yt-dlp player client produced the file
+    # ("web" | "android" | "ios"), so a later job's diagnostics
+    # show whether the sign-in fallback was needed. None for
+    # non-YouTube downloads and for failed/skipped attempts.
+    player_client: str | None = None
 
 
 def _file_size(entry: dict) -> int | None:
@@ -444,6 +516,33 @@ class FootageDownloader:
             return [sys.executable, "-m", "yt_dlp"]
         return None
 
+    def _run_ytdlp_attempt(self, prefix: list[str], url: str,
+                           target: Path, limit: int,
+                           player_client: str) -> subprocess.CompletedProcess:
+        """One yt-dlp run for a YouTube video, with the given player
+        client. "web" is the default (no extractor args — exactly
+        the command used before the fallback existed); "android"
+        / "ios" add `--extractor-args
+        youtube:player_client=<client>`. Each attempt is bounded
+        by FOOTAGE_DOWNLOAD_TIMEOUT_SECONDS."""
+        cmd = prefix + [
+            "--no-warnings", "--no-playlist",
+            "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--merge-output-format", "mp4",
+            "--max-filesize", str(limit),
+            "--output", str(target), url]
+        if player_client != "web":
+            cmd = prefix + [
+                "--no-warnings", "--no-playlist",
+                "--extractor-args",
+                f"youtube:player_client={player_client}",
+                "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "--merge-output-format", "mp4",
+                "--max-filesize", str(limit),
+                "--output", str(target), url]
+        return self._ytdlp_runner(cmd,
+                                  self.settings.footage_download_timeout_seconds)
+
     def _download_youtube(self, job_id: str, candidate_id: str,
                           video_id: str,
                           budget_bytes: int) -> FootageDownload:
@@ -461,6 +560,19 @@ class FootageDownloader:
         can never reach this method. The video id is validated
         (YouTube ids are 11 chars of [A-Za-z0-9_-]) so no
         attacker-controlled string reaches the command line.
+
+        Sign-in fallback: YouTube demands a signed-in browser
+        from some cloud servers, and yt-dlp then fails with an
+        authentication error ("--from-browser or --cookies for
+        the authentication"). When that happens the same download
+        is retried with the mobile player clients — android,
+        then ios — which need no account and no cookies and
+        often bypass the check. Any other failure (video
+        unavailable, over the size cap, timeout, yt-dlp missing)
+        returns immediately without a retry. The player client
+        that produced the file is recorded on the outcome
+        (`player_client`), and named in the reason when a
+        fallback client was needed.
         """
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", video_id):
             return FootageDownload(
@@ -487,40 +599,49 @@ class FootageDownloader:
             return FootageDownload(candidate_video_id=candidate_id,
                                    status="failed", reason=str(exc))
         target.parent.mkdir(parents=True, exist_ok=True)
-        cmd = prefix + [
-            "--no-warnings", "--no-playlist",
-            "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "--merge-output-format", "mp4",
-            "--max-filesize", str(limit),
-            "--output", str(target), url]
-        try:
-            completed = self._ytdlp_runner(
-                cmd, self.settings.footage_download_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            self._remove_quietly(target)
-            return FootageDownload(
-                candidate_video_id=candidate_id, status="failed",
-                source_url=url,
-                reason="YouTube download timed out after "
-                       f"{self.settings.footage_download_timeout_seconds:.0f}s")
-        except OSError as exc:
-            self._remove_quietly(target)
-            return FootageDownload(
-                candidate_video_id=candidate_id, status="failed",
-                source_url=url, reason=f"could not run yt-dlp: {exc}")
-        stderr = (getattr(completed, "stderr", "") or "").strip()
-        if completed.returncode != 0:
-            self._remove_quietly(target)
+        player_client = "web"
+        for client in _YT_PLAYER_CLIENTS:
+            player_client = client
+            try:
+                completed = self._run_ytdlp_attempt(
+                    prefix, url, target, limit, client)
+            except subprocess.TimeoutExpired:
+                _remove_partials(target, video_id)
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url,
+                    reason="YouTube download timed out after "
+                           f"{self.settings.footage_download_timeout_seconds:.0f}s")
+            except OSError as exc:
+                _remove_partials(target, video_id)
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url, reason=f"could not run yt-dlp: {exc}")
+            stderr = (getattr(completed, "stderr", "") or "").strip()
+            if completed.returncode == 0:
+                break
+            # A failed attempt never leaves a partial file behind.
+            _remove_partials(target, video_id)
             if "larger than max-filesize" in stderr:
                 return FootageDownload(
                     candidate_video_id=candidate_id, status="skipped",
                     source_url=url,
                     reason=f"YouTube video exceeds the size cap "
                            f"({limit / 1024 / 1024:.0f} MB)")
+            if _is_youtube_auth_error(stderr) and client != "ios":
+                # YouTube demanded a signed-in browser from this
+                # server; retry with the next mobile player
+                # client, which needs no account and no cookies.
+                continue
             detail = stderr[-300:] if stderr else f"exit code {completed.returncode}"
+            reason = f"yt-dlp failed: {detail}"
+            if _is_youtube_auth_error(stderr):
+                reason += (" — YouTube required sign-in from this "
+                           "server even after trying the android/ios "
+                           "player clients")
             return FootageDownload(
                 candidate_video_id=candidate_id, status="failed",
-                source_url=url, reason=f"yt-dlp failed: {detail}")
+                source_url=url, reason=reason)
         # yt-dlp reports success; the file must actually be there.
         if not target.is_file():
             found = sorted(target.parent.glob(f"{video_id}.*"))
@@ -556,9 +677,12 @@ class FootageDownloader:
             source_url=url, local_path=str(target),
             bytes_downloaded=written,
             duration_seconds=probe.duration_seconds,
+            player_client=player_client,
             reason=f"downloaded {video_id}.mp4 "
                    f"({written / 1024 / 1024:.1f} MB, "
-                   f"{probe.duration_seconds:.1f}s)")
+                   f"{probe.duration_seconds:.1f}s)"
+                   + (f" via {player_client} player client"
+                      if player_client != "web" else ""))
 
     # ------------------------------------------------------------ stock flow (Pexels / Pixabay)
     def _download_stock(self, job_id: str, candidate_id: str,

@@ -603,6 +603,150 @@ def test_youtube_downloader_rejects_corrupt_download(engine, tmp_path):
         "a file that fails ffprobe must be deleted, never analysed"
 
 
+# ------------------------------------------------------------------ YouTube sign-in fallback (player clients)
+class _ScriptedRunner:
+    """Fake yt-dlp that fails/succeeds per call in script order.
+
+    `script` is a list of steps: "auth" (fails with the live
+    sign-in error), "fail" (fails with a generic error), or "ok"
+    (copies `content` into place). Records every command so tests
+    can prove which player client each attempt used.
+    """
+
+    _AUTH_STDERR = (
+        "ERROR: [youtube] cc-vid-1: Sign in to confirm you're not a bot. "
+        "Use --cookies-from-browser or --cookies for the authentication. "
+        "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp "
+        "for how to manually pass cookies.")
+
+    def __init__(self, script, content=b""):
+        self.script = list(script)
+        self.content = content
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd, timeout):
+        self.calls.append(list(cmd))
+        step = self.script.pop(0) if self.script else "ok"
+        out_idx = cmd.index("--output") + 1
+        target = Path(cmd[out_idx])
+        if step == "ok":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(self.content)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if step == "auth":
+            return subprocess.CompletedProcess(cmd, 1, "", self._AUTH_STDERR)
+        return subprocess.CompletedProcess(cmd, 1, "", step)
+
+
+def _player_client_of(cmd):
+    """The player client a yt-dlp command used ("web" when no
+    --extractor-args was passed)."""
+    if "--extractor-args" not in cmd:
+        return "web"
+    arg = cmd[cmd.index("--extractor-args") + 1]
+    return arg.split("player_client=")[-1]
+
+
+def _approved_youtube_job(engine, tmp_path):
+    content = _write_footage(tmp_path / "clip.mp4").read_bytes()
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    return job, candidate_id, content
+
+
+def _run_download(engine, runner, job, candidate_id):
+    downloader = _downloader_with_runner(engine, runner)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as session:
+        result = downloader.download_candidate(session, job.id, candidate_id,
+                                               budget_bytes=10 ** 9)
+        session.commit()
+    return result, downloader
+
+
+def test_youtube_downloader_web_success_records_web_client(engine, tmp_path):
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _ScriptedRunner(["ok"], content)
+    result, _ = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "downloaded"
+    assert result.player_client == "web"
+    assert "via " not in (result.reason or "")
+    assert len(runner.calls) == 1
+    assert _player_client_of(runner.calls[0]) == "web"
+
+
+def test_youtube_downloader_retries_auth_failure_with_android(engine, tmp_path):
+    """The live failure: the web client is told to sign in, the
+    android player client downloads the same video."""
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _ScriptedRunner(["auth", "ok"], content)
+    result, downloader = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "downloaded"
+    assert result.player_client == "android"
+    assert "via android player client" in result.reason
+    assert result.local_path and Path(result.local_path).is_file()
+    assert len(runner.calls) == 2
+    assert _player_client_of(runner.calls[0]) == "web"
+    assert _player_client_of(runner.calls[1]) == "android"
+    assert "youtube:player_client=android" in runner.calls[1]
+    sessions = sessionmaker(bind=engine)
+    with sessions() as session:
+        footage = (session.query(ApprovedFootage)
+                   .filter(ApprovedFootage.candidate_video_id == candidate_id).first())
+        assert footage.storage_path == result.local_path
+
+
+def test_youtube_downloader_falls_back_android_then_ios(engine, tmp_path):
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _ScriptedRunner(["auth", "auth", "ok"], content)
+    result, _ = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "downloaded"
+    assert result.player_client == "ios"
+    assert "via ios player client" in result.reason
+    assert len(runner.calls) == 3
+    assert [_player_client_of(c) for c in runner.calls] == ["web", "android", "ios"]
+
+
+def test_youtube_downloader_auth_failure_on_all_clients_fails_honestly(engine, tmp_path):
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _ScriptedRunner(["auth", "auth", "auth"], content)
+    result, downloader = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "failed"
+    assert "sign-in" in result.reason
+    assert result.player_client is None
+    assert result.local_path is None
+    assert len(runner.calls) == 3
+    storage = Path(downloader.storage.root)
+    assert not list(storage.glob(f"jobs/{job.id}/footage/{candidate_id}/*")), \
+        "failed attempts must not leave a partial file behind"
+
+
+def test_youtube_downloader_non_auth_failure_does_not_retry(engine, tmp_path):
+    """A video that is simply unavailable must not burn two more
+    attempts on the android/ios clients."""
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _ScriptedRunner(["ERROR: [youtube] cc-vid-1: Video unavailable"],
+                             content)
+    result, _ = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "failed"
+    assert "yt-dlp failed" in result.reason
+    assert "sign-in" not in result.reason
+    assert len(runner.calls) == 1
+
+
+def test_youtube_downloader_max_filesize_skip_does_not_retry(engine, tmp_path):
+    """An oversized video is a cap decision, not an auth failure —
+    no fallback attempts."""
+    job, candidate_id, content = _approved_youtube_job(engine, tmp_path)
+    runner = _StubRunner(max_filesize_skip=True)
+    result, _ = _run_download(engine, runner, job, candidate_id)
+    assert result.status == "skipped"
+    assert "size cap" in result.reason
+    assert len(runner.calls) == 1
+
+
 # ------------------------------------------------------------------ service level
 def test_service_run_downloads_approved_youtube_footage(engine, tmp_path, monkeypatch):
     """End to end for one approved CC YouTube candidate: stubbed

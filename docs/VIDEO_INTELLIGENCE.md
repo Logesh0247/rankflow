@@ -81,6 +81,28 @@ Download rules (all enforced, all honest):
   with certificate checks disabled. The binary is resolved from
   `FOOTAGE_YTDLP_PATH` on PATH, falling back to
   `python -m yt_dlp` when the package is importable.
+- **YouTube sign-in fallback.** YouTube demands a signed-in
+  browser from some cloud servers — on 2026-11-21 every
+  download from Render failed with "--from-browser or
+  --cookies for the authentication", while search and Rights
+  still worked. When yt-dlp fails that way (and only that
+  way), the same download is retried with the mobile player
+  clients (`--extractor-args
+  youtube:player_client=android`, then `ios`). They need no
+  account and no cookies — no cookies support exists anywhere
+  in the downloader — and they often bypass the web sign-in
+  check. Any other failure (video unavailable, over the size
+  cap, timeout) returns immediately with no retry. Which
+  player client produced a file is recorded on the download
+  outcome (`FootageDownload.player_client`, also named in the
+  reason when a fallback client was needed), so a job's
+  diagnostics show whether the fallback was used. **Honest
+  limit:** the player-client workaround is not guaranteed —
+  YouTube can close it at any time, and it is verified only
+  by a real Render-side job actually downloading a YouTube
+  video. If it stops working, the fallback is Pixabay/Archive
+  clips, which download as direct MP4 links and are not
+  affected by YouTube's sign-in check.
 - **Pexels / Pixabay (stock clips).** An approved stock clip is
   downloaded as a direct MP4 over HTTPS — no yt-dlp. The search
   response carries no file link, so the video is re-fetched by
@@ -188,6 +210,11 @@ manifest `manifest.json`):
   a standard-licence video is never downloaded, and yt-dlp
   cannot reach YouTube from a host whose egress proxy blocks
   it (this VM) — live YouTube downloads are verified on the
-  deploy host. Pexels / Pixabay downloads are direct MP4 links
-  and need their API keys configured at download time; live
-  stock downloads are likewise verified on the deploy host.
+  deploy host. YouTube can also demand a signed-in browser
+  from cloud servers; the android/ios player-client fallback
+  (see "Footage supply") is the no-account workaround, and it
+  is not guaranteed — if it stops working, Pixabay/Archive
+  clips (direct MP4 downloads) are the fallback. Pexels /
+  Pixabay downloads are direct MP4 links and need their API
+  keys configured at download time; live stock downloads are
+  likewise verified on the deploy host.
