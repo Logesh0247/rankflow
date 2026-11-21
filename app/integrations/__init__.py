@@ -1,4 +1,4 @@
-"""RANKFLOW AI integrations package.
+"""Momentrix AI integrations package.
 
 Integration points (not implemented in Prompt 01):
 - YouTube / video-source search

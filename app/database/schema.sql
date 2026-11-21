@@ -1,4 +1,4 @@
--- RANKFLOW AI — database schema (generated from app/models/models.py, PostgreSQL dialect)
+-- Momentrix AI — database schema (generated from app/models/models.py, PostgreSQL dialect)
 -- Generated in Prompt 06 (adds ranking_results.score_breakdown JSON);
 -- updated in Prompt 12 (adds cost_events + job_id indexes on
 -- storyboards / narrations / edit_instructions). Apply with: psql "$DATABASE_URL" -f app/database/schema.sql

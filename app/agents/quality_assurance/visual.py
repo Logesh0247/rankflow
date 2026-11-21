@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 3: visual inspection (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 3: visual inspection (Prompt 09).
 
 Samples frames from the rendered video with OpenCV and measures
 them — brightness, frame-to-frame difference, pixel variance.

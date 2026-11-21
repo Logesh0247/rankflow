@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent, Phases 1-6: service (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent, Phases 1-6: service (Prompt 05).
 
 Flow for one job:
   approved candidates (from the Rights gate — server-side, fail

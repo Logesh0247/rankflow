@@ -1,4 +1,4 @@
-# RANKFLOW AI — Deployment Guide (Prompt 12, Phase 6)
+# Momentrix AI — Deployment Guide (Prompt 12, Phase 6)
 
 ## What this service actually needs
 
@@ -39,7 +39,7 @@ authentication, e.g. Caddy `basic_auth`, and TLS.
 ```bash
 # Verify the deployment
 curl http://127.0.0.1:8000/health/detailed
-curl http://127.0.0.1:8000/ui/     # the RANKFLOW space
+curl http://127.0.0.1:8000/ui/     # the Momentrix space
 ```
 
 ## Deploy without Docker

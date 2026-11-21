@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RANKFLOW AI — Creator Studio</title>
+<title>Momentrix AI — Creator Studio</title>
 <style>
 :root{
   --bg:#0a0a13; --bg2:#0d0d18; --panel:#131322; --panel2:#1a1a2e; --panel3:#20203a;
@@ -140,7 +140,7 @@ tr:hover td{background:var(--panel2)}
 <body>
 <div class="app">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><div class="logo">RANKFLOW <span>AI</span></div><div class="sub">CREATOR STUDIO</div></div>
+    <div class="brand"><div class="logo">MOMENTRIX <span>AI</span></div><div class="sub">CREATOR STUDIO</div></div>
     <div id="nav"></div>
     <div class="side-foot">
       <div class="user-chip"><div class="avatar">L</div><div><div class="n">LOGESH</div><div class="r">Creator &amp; Owner</div></div></div>
@@ -157,7 +157,7 @@ tr:hover td{background:var(--panel2)}
       <div class="hero">
         <div class="hero-copy">
           <h1>AI-powered creative production at enterprise scale</h1>
-          <p class="lede">Give RANKFLOW one topic. Seven agents discover sources, verify rights, find the five best moments, plan the countdown, render the Short and QA it — then present it for your approval.</p>
+          <p class="lede">Give Momentrix one topic. Seven agents discover sources, verify rights, find the five best moments, plan the countdown, render the Short and QA it — then present it for your approval.</p>
           <div class="chips">
             <div class="chip"><b id="stat-jobs">—</b><span>production jobs</span></div>
             <div class="chip"><b id="stat-approved">—</b><span>approved videos</span></div>
@@ -165,11 +165,11 @@ tr:hover td{background:var(--panel2)}
           </div>
         </div>
         <div class="featured" onclick="go('review')" style="cursor:pointer">
-          <img src="poster.jpg" alt="Frame from the RANKFLOW demo render">
-          <div class="overlay"><div class="tag">FEATURED PROJECT</div><h2 id="featured-title">RANKFLOW Short — Demo Render</h2><div class="sub" style="color:#c9c9dd">Real render: 1080×1920 @ 30 fps, H.264 + AAC, 74.07 s. Click to review it.</div></div>
+          <img src="poster.jpg" alt="Frame from the Momentrix demo render">
+          <div class="overlay"><div class="tag">FEATURED PROJECT</div><h2 id="featured-title">Momentrix Short — Demo Render</h2><div class="sub" style="color:#c9c9dd">Real render: 1080×1920 @ 30 fps, H.264 + AAC, 74.07 s. Click to review it.</div></div>
         </div>
         <div class="card create-ai">
-          <h3>Create with AI</h3><div class="sub">The seven RANKFLOW agents, live status from the backend.</div>
+          <h3>Create with AI</h3><div class="sub">The seven Momentrix agents, live status from the backend.</div>
           <div id="agent-tools"></div>
         </div>
       </div>
@@ -266,10 +266,10 @@ tr:hover td{background:var(--panel2)}
       <div class="set-grid" id="settings-grid"></div>
     </section>
 
-    <!-- ============ NOT IN RANKFLOW ============ -->
+    <!-- ============ NOT IN Momentrix ============ -->
     <section class="page" id="page-scope">
       <div class="kicker">Creator Studio</div>
-      <h1 id="scope-title">Not part of RANKFLOW</h1>
+      <h1 id="scope-title">Not part of Momentrix</h1>
       <div class="card"><p class="sub" id="scope-body" style="font-size:14px"></p>
       <p style="margin-top:12px"><button class="btn btn-primary" onclick="go('overview')">← Back to Overview</button></p></div>
     </section>
@@ -328,13 +328,13 @@ function go(page, arg){
 }
 function showScope(which){
   const msgs={
-    'Brand Kit':'RANKFLOW has no brand kit — videos use the countdown template (1080×1920, bottom-third captions, purple rank labels) set by the Creative Director.',
-    'Avatars':'RANKFLOW has no avatar studio — narration is a voiceover script, and there is no TTS voice configured yet, so renders currently carry a silent narration track.',
-    'Analytics':'RANKFLOW has no analytics yet — Prompt 12 (Optimization & Deployment) adds performance tracking. For now, Job History and QA reports are the record.',
-    'Team':'RANKFLOW is a single-user system — jobs are requested by one owner (LOGESH). There is no team activity feed; the Activity panel shows real agent logs instead.',
-    'Templates':'RANKFLOW has no saved templates — every job starts from a topic you type. The example topics on Overview are just starting points.'};
-  el('scope-title').textContent = which||'Not part of RANKFLOW';
-  el('scope-body').textContent = msgs[which]||'This section is not part of RANKFLOW AI.';
+    'Brand Kit':'Momentrix has no brand kit — videos use the countdown template (1080×1920, bottom-third captions, purple rank labels) set by the Creative Director.',
+    'Avatars':'Momentrix has no avatar studio — narration is a voiceover script, synthesised with Edge TTS (free, no API key). Live synthesis is unverified on this machine, so renders here fall back to a silent narration track until it is verified on the deploy host.',
+    'Analytics':'Momentrix has no analytics yet — Prompt 12 (Optimization & Deployment) adds performance tracking. For now, Job History and QA reports are the record.',
+    'Team':'Momentrix is a single-user system — jobs are requested by one owner (LOGESH). There is no team activity feed; the Activity panel shows real agent logs instead.',
+    'Templates':'Momentrix has no saved templates — every job starts from a topic you type. The example topics on Overview are just starting points.'};
+  el('scope-title').textContent = which||'Not part of Momentrix';
+  el('scope-body').textContent = msgs[which]||'This section is not part of Momentrix AI.';
 }
 
 /* ---------- overview ---------- */
@@ -369,7 +369,7 @@ function buildWorkflow(job){
   const steps=[['01','BRIEF & PLAN','Capture the brief, define objectives, audience, and key messages.'],['02','CREATE & GENERATE','Use the best AI models to generate on-brand content at scale.'],['03','REVIEW & APPROVE','Collaborate in real time. Get feedback, refine, and approve with confidence.'],['04','PUBLISH & DISTRIBUTE','Publish to all channels and formats. Personalise and localise at scale.'],['05','MEASURE & OPTIMISE','Track performance, learn what works, and optimise continuously.']];
   const idx = job.current_stage==='COMPLETED'||job.status==='awaiting_approval'||job.status==='approved' ? 3 : STAGES.indexOf(job.current_stage);
   el('wf-steps').innerHTML = steps.map((s,i)=>{const cls = i<idx?'done':i===idx?'current':'';return `<div class="wf-step ${cls}"><div class="num">${s[0]}</div><h4>${s[1]}</h4><p>${s[2]}</p></div>`}).join('');
-  el('wf-note').textContent = job.status==='approved' ? 'This job is approved. Publishing is manual — RANKFLOW does not auto-publish (Prompt 12 covers deployment).'
+  el('wf-note').textContent = job.status==='approved' ? 'This job is approved. Publishing is manual — Momentrix does not auto-publish (Prompt 12 covers deployment).'
     : job.status==='awaiting_approval' ? 'Latest job is awaiting your approval — open Final Video Review to watch, approve, or reject & regenerate.'
     : job.status==='failed' ? 'Latest job failed: '+(job.error_message||'see dashboard')+' — resume it from the dashboard after fixing the cause.'
     : 'Latest job is at stage '+(job.current_stage||'—')+'.';
@@ -486,7 +486,7 @@ async function loadReview(jobId){
 }
 async function approveJob(){
   if(!currentJobId) return;
-  try{ await api(`/jobs/${currentJobId}/approve`,{method:'POST'}); banner('Video approved. Publishing is manual — RANKFLOW does not auto-publish.'); loadReview(currentJobId); }
+  try{ await api(`/jobs/${currentJobId}/approve`,{method:'POST'}); banner('Video approved. Publishing is manual — Momentrix does not auto-publish.'); loadReview(currentJobId); }
   catch(e){ el('review-error').innerHTML='<div class="error-box">Approve failed: '+esc(e.message)+'</div>'; }
 }
 async function rejectJob(){
@@ -513,7 +513,7 @@ async function loadSettings(){
     const sec = (label, rows)=>`<div class="card"><h3>${label}</h3><div style="margin-top:6px">${rows}</div></div>`;
     const kv=(k,v,ok)=>`<div class="kv"><span>${k}</span><b>${ok===undefined?esc(String(v)):''}<span class="dot ${ok===true?'green':ok===false?'red':'grey'}"></span> ${ok===undefined?'':(ok?'Yes':'No')}</b></div>`;
     el('settings-grid').innerHTML =
-      sec('AI providers', kv('Research provider', s.research_provider) + kv('YouTube API', '', s.youtube_configured) + kv('TTS provider', s.tts_provider, s.tts_configured) + `<div class="kv"><span>Note</span><b style="color:var(--muted);font-weight:400">No TTS voice — renders are silent</b></div>`) +
+      sec('AI providers', kv('Research provider', s.research_provider) + kv('YouTube API', '', s.youtube_configured) + kv('TTS provider', s.tts_provider, s.tts_configured) + `<div class="kv"><span>Voice</span><b style="color:var(--muted);font-weight:400">${s.tts_configured ? esc(s.tts_voice || '') + ' — Edge TTS, free, no API key' : 'No TTS voice — renders are silent'}</b></div>`) +
       sec('Audio', kv('Licensed music library', '', s.music_library_configured) + kv('Licensed SFX library', '', s.sfx_library_configured) + `<div class="kv"><span>Note</span><b style="color:var(--muted);font-weight:400">No music/SFX until a licensed library is configured</b></div>`) +
       sec('Video output', `<div class="kv"><span>Resolution</span><b>${s.video_output.width}×${s.video_output.height}</b></div><div class="kv"><span>Frame rate</span><b>${s.video_output.fps} fps</b></div><div class="kv"><span>Codecs</span><b>${s.video_output.video_codec} + ${s.video_output.audio_codec}</b></div><div class="kv"><span>CRF / preset</span><b>${s.video_output.crf} / ${esc(s.video_output.preset)}</b></div><div class="kv"><span>Target duration</span><b>${s.video_output.target_duration_seconds} s</b></div>`) +
       sec('Storage', kv('Backend', s.storage_backend) + kv('Storage folder exists', '', s.storage_root_exists) + `<div class="kv"><span>Free disk</span><b>${s.storage_free_gb??'—'} GB</b></div>`) +

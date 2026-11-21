@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent, Phase 1: ingestion (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent, Phase 1: ingestion (Prompt 05).
 
 Probes a local video file with ffprobe and validates it before any
 frame is read. A file is rejected (never analysed) when it does not

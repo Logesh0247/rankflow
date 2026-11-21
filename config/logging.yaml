@@ -1,4 +1,4 @@
-# RANKFLOW AI — logging configuration (reference; code default is in
+# Momentrix AI — logging configuration (reference; code default is in
 # app/core/logging.py, which uses this format and LOG_LEVEL).
 version: 1
 disable_existing_loggers: false

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent, Phase 5: timestamp verification (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent, Phase 5: timestamp verification (Prompt 05).
 
 Every detected moment is re-checked against the original video
 before it is persisted:

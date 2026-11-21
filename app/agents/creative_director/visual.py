@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent, Phase 5: visual direction (Prompt 07).
+"""Momentrix AI — Creative Director Agent, Phase 5: visual direction (Prompt 07).
 
 Defines countdown graphics, caption placement, text emphasis,
 transition types, sound-effect cues, background-music

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phases 1-7: service (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phases 1-7: service (Prompt 09).
 
 Flow for one job:
   rendered video (Production, status ready)
@@ -278,6 +278,11 @@ class QAService:
                 "narration audio is not generated: "
                 f"{(manifest.get('narration') or {}).get('detail') or narration_status} — "
                 "the render has no voiceover, only captions carrying the script")
+        elif manifest and narration_status == "generation_failed":
+            narration_issues.append(
+                "narration audio generation failed: "
+                f"{(manifest.get('narration') or {}).get('detail') or narration_status} — "
+                "the render has no voiceover, only captions carrying the script")
         elif not manifest:
             narration_issues.append(
                 "no render manifest was found — narration / music status could not be verified")
@@ -317,10 +322,18 @@ class QAService:
                               narration_issues, verdict)
         recommendations: list[str] = []
         if verdict == "needs_review":
-            recommendations.append(
-                "Video is presentable for user review, but QA has not approved it: "
-                "configure a TTS provider and re-render for a narration voice, "
-                "or approve it as-is knowing the voiceover is missing.")
+            if any("generation failed" in i for i in issues):
+                recommendations.append(
+                    "Video is presentable for user review, but QA has not approved it: "
+                    "the TTS endpoint failed during this render — re-run production "
+                    "(synthesis may succeed on retry) or approve it as-is knowing "
+                    "the voiceover is missing.")
+            else:
+                recommendations.append(
+                    "Video is presentable for user review, but QA has not approved it: "
+                    "enable TTS (TTS_ENABLED=true, TTS_PROVIDER=edge-tts) and re-render "
+                    "for a narration voice, or approve it as-is knowing the voiceover "
+                    "is missing.")
         if verdict == "fail":
             recommendations.append(
                 "Do not present this video for approval — fix the issues above "

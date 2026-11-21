@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent demo (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent demo (Prompt 09).
 
 Usage:
     .venv/bin/python scripts/run_qa.py <job_id>

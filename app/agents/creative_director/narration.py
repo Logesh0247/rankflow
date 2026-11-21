@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent, Phases 3-4: countdown storytelling and narration (Prompt 07).
+"""Momentrix AI — Creative Director Agent, Phases 3-4: countdown storytelling and narration (Prompt 07).
 
 Narration is built ONLY from what Video Intelligence measured
 for the moment — motion, sharpness, brightness, visual quality,

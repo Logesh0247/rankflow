@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent executor (Prompt 09, Phase 7).
+"""Momentrix AI — Quality Assurance Agent executor (Prompt 09, Phase 7).
 
 The callable the orchestrator registers for the ``quality_assurance``
 agent. It takes an OrchestratorTask dict, runs the QAService for

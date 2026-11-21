@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Ranking Agent (Prompt 06).
+"""Momentrix AI — Ranking Agent (Prompt 06).
 
 Exports the service and executor the orchestrator registers.
 """

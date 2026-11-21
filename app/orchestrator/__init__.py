@@ -1,4 +1,4 @@
-"""RANKFLOW AI orchestrator package (Prompt 02).
+"""Momentrix AI orchestrator package (Prompt 02).
 
 Exports the central orchestrator: workflow states, communication
 contracts, agent registry, job management and the workflow engine.

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — job management (Prompt 02, Phase 1).
+"""Momentrix AI — job management (Prompt 02, Phase 1).
 
 Owns all persistent job state: creation, retrieval, history,
 cancellation and per-stage checkpoints. Every method opens and

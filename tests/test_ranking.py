@@ -36,7 +36,8 @@ FPS, W, H = 15, 160, 120
 def _settings(**overrides) -> Settings:
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 30.0,
-            "rights_fetch_ia_metadata": False}
+            "rights_fetch_ia_metadata": False,
+            "tts_enabled": False}  # No-voice path: verdict must not depend on endpoint reachability.
     base.update(overrides)
     return Settings(**base)
 
@@ -426,7 +427,7 @@ def test_orchestrator_runs_real_ranking_then_production_then_qa(engine, tmp_path
     video intelligence (local footage) -> ranking -> creative
     director -> production (Prompt 08, built) -> quality
     assurance (Prompt 09, built). QA verdict is needs_review,
-    not pass: no TTS provider is configured, so the render has
+    not pass: TTS is disabled for this test, so the render has
     no narration voice and effectively silent audio — flagged
     honestly, never passed as present."""
     job = _new_job(engine)

@@ -43,7 +43,8 @@ TOPIC = "TOP 5 CRAZIEST PARKOUR FAILS"
 def _settings(**overrides) -> Settings:
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 30.0,
-            "rights_fetch_ia_metadata": False}
+            "rights_fetch_ia_metadata": False,
+            "tts_enabled": False}  # No-voice path: verdict must not depend on endpoint reachability.
     base.update(overrides)
     return Settings(**base)
 
@@ -422,7 +423,7 @@ def test_orchestrator_runs_real_creative_then_production_then_qa(engine, tmp_pat
     assurance (Prompt 09, built). The orchestrator timeout is
     raised because a real 1080x1920 render takes minutes on this
     VM, far longer than the 30s default. QA verdict is
-    needs_review: no TTS provider, so no narration voice."""
+    needs_review: TTS is disabled for this test, so no narration voice."""
     job = _new_job(engine)
     colours = [(40, 160, 40), (40, 40, 180), (40, 200, 220), (120, 40, 20), (140, 140, 140)]
     sessions = sessionmaker(bind=engine)

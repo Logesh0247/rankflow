@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent (Prompt 05).
 
 Exports the service and executor the orchestrator registers.
 """

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — database session and initialisation."""
+"""Momentrix AI — database session and initialisation."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -15,10 +15,13 @@ Flow for one job:
   -> persist the RenderedVideo row and a render manifest.
 
 What is NOT in the render, recorded honestly in the manifest:
-* narration audio — no TTS provider is configured and no local
-  TTS binary is installed, so the audio track is silence; the
-  narration script exists and the captions carry it, but no
-  voice is claimed (see narration.py);
+* narration audio — generated with Edge TTS by default (free, no
+  API key). If synthesis fails at runtime (endpoint down,
+  rate-limited, or blocked by the network — live synthesis is
+  unverified on this machine), the audio track is silence and the
+  manifest records the failure reason (status
+  ``generation_failed``); the narration script exists and the
+  captions carry it, but no voice is claimed (see narration.py);
 * licensed music — only mixed in when PROD_MUSIC_DIR holds a
   licensed file that probes as audio; otherwise none, and the
   manifest says so;
@@ -67,7 +70,8 @@ from app.agents.production.graphics import (
     card_graphics_filters, clip_graphics_filters,
 )
 from app.agents.production.narration import (
-    NarrationProvider, detect_narration_provider, narration_estimated_seconds,
+    NarrationAudio, NarrationProvider, detect_narration_provider,
+    generate_narration_audio, narration_estimated_seconds,
 )
 from app.agents.production.reframe import motion_centroid_x
 from app.agents.production.render import (
@@ -76,6 +80,7 @@ from app.agents.production.render import (
 from app.agents.rights.gate import require_approved
 from app.agents.video_intelligence.probe import probe_video
 from app.core.config import Settings, get_settings
+from app.core.cost import CostService
 from app.core.errors import ExternalServiceError, NotFoundError, ValidationError
 from app.models.models import (
     AnalyzedMoment, ApprovedFootage, EditInstruction, RenderedVideo,
@@ -168,6 +173,33 @@ class ProductionService:
                 f"narration is {narration_seconds:.1f}s but the timeline is only "
                 f"{total_duration:.1f}s — the voiceover cannot fit the video")
 
+        # Phase 4: synthesise the narration voice with Edge TTS.
+        # FAIL-SOFT by design: a synthesis failure (endpoint down,
+        # rate-limited, or — on this machine — the network proxy
+        # blocking speech.platform.bing.com) never hard-fails the
+        # job. The render falls back to a silent narration track,
+        # the failure reason is recorded in the manifest, and QA
+        # reports needs_review instead of pass.
+        narration_audio: NarrationAudio | None = None
+        narration_failure: str | None = None
+        synthesis_warnings: list[str] = []
+        if narration_provider.status == "edge_tts":
+            try:
+                narration_audio = generate_narration_audio(
+                    narration_script, work_dir / "narration.mp3", self.settings)
+                try:
+                    CostService(self._engine, self.settings).record_tts(
+                        job.id, chars=len(narration_script),
+                        label="edge-tts narration (free, no API key)")
+                except Exception:  # noqa: BLE001 — cost recording never breaks a job
+                    pass
+            except Exception as exc:  # noqa: BLE001 — any synthesis failure is fail-soft
+                narration_failure = str(exc)
+                synthesis_warnings = [f"narration synthesis failed — rendering with a "
+                                      f"silent narration track: {narration_failure}"]
+        else:
+            synthesis_warnings = []
+
         with self._sessions() as session:
             # RIGHTS GATE FIRST — before any footage file is touched.
             candidate_ids = [c["candidate_video_id"] for c in clips]
@@ -192,6 +224,7 @@ class ProductionService:
             segments, warnings = self._render_timeline(
                 job, clips, moments, sources, caption_plan, per_moment,
                 intro_s, outro_s, transition_s, total_duration, work_dir)
+            warnings = synthesis_warnings + warnings
             music = find_music(self.settings, ffprobe_path=self.settings.ffprobe_path)
             chime = find_sfx(self.settings, name_contains="chime",
                              ffprobe_path=self.settings.ffprobe_path)
@@ -203,6 +236,7 @@ class ProductionService:
                 ffmpeg_path=self.settings.ffmpeg_path,
                 ffprobe_path=self.settings.ffprobe_path,
                 total_duration_seconds=total_duration,
+                narration_path=(narration_audio.file_path if narration_audio else None),
                 music_path=music.file_path if music.status == "included" else None,
                 timeout_seconds=float(self.settings.prod_render_timeout_seconds))
             validation = validate_render(
@@ -221,6 +255,41 @@ class ProductionService:
                 session.commit()
             raise
 
+        if narration_audio is not None:
+            narration_report = {
+                "script_words": len(narration_script.split()),
+                "estimated_seconds": narration_seconds,
+                "provider": narration_audio.provider,
+                "voice": narration_audio.voice,
+                "status": "generated",
+                "detail": narration_audio.detail,
+                "audio_path": narration_audio.file_path,
+                "duration_seconds": narration_audio.duration_seconds,
+                "chars": narration_audio.chars,
+                "chunks": narration_audio.chunks,
+            }
+        elif narration_failure is not None:
+            narration_report = {
+                "script_words": len(narration_script.split()),
+                "estimated_seconds": narration_seconds,
+                "provider": narration_provider.provider,
+                "voice": narration_provider.voice,
+                "status": "generation_failed",
+                "detail": narration_failure,
+                "audio_path": None,
+            }
+        else:
+            narration_report = {
+                "script_words": len(narration_script.split()),
+                "estimated_seconds": narration_seconds,
+                "provider": narration_provider.provider,
+                "voice": narration_provider.voice,
+                "status": ("not_generated_no_tts_provider"
+                           if narration_provider.status == "not_configured"
+                           else "not_generated_no_tts_implementation"),
+                "detail": narration_provider.detail,
+                "audio_path": None,
+            }
         report = ProductionReport(
             job_id=job.id, rendered_video_id=rendered_id,
             file_path=str(output_path),
@@ -230,18 +299,9 @@ class ProductionService:
             video_codec=validation.video_codec,
             audio_codec=validation.audio_codec or "aac",
             segments=[SegmentReport(**s["report"]) for s in segments],
-            narration={
-                "script_words": len(narration_script.split()),
-                "estimated_seconds": narration_seconds,
-                "provider": narration_provider.provider,
-                "status": ("not_generated_no_tts_provider"
-                           if narration_provider.status == "not_configured"
-                           else "not_generated_no_tts_implementation"),
-                "detail": narration_provider.detail,
-                "audio_path": None,
-            },
+            narration=narration_report,
             music=music, sfx_chime=chime, sfx_whoosh=whoosh, sfx_mixed=False,
-            ducking=ducking_status(narration_generated=False,
+            ducking=ducking_status(narration_generated=narration_audio is not None,
                                    music_included=music.status == "included"),
             captions={
                 "lines": len(caption_plan),
@@ -258,7 +318,8 @@ class ProductionService:
                 "licence_name": per_moment[i].get("licence_name") if i < len(per_moment) else None,
             } for i, c in enumerate(clips)],
             validation=validation.model_dump(),
-            limitations=self._limitations(narration_provider, music, chime, whoosh),
+            limitations=self._limitations(narration_provider, narration_audio,
+                                          narration_failure, music, chime, whoosh),
             warnings=warnings,
             metrics={
                 "segments": len(segments),
@@ -538,13 +599,36 @@ class ProductionService:
         return self.get_production(job_id).model_dump(mode="json")
 
     @staticmethod
-    def _limitations(narration_provider: NarrationProvider, music: AudioAsset,
+    def _limitations(narration_provider: NarrationProvider,
+                     narration_audio: NarrationAudio | None,
+                     narration_failure: str | None,
+                     music: AudioAsset,
                      chime: AudioAsset, whoosh: AudioAsset) -> list[str]:
+        if narration_audio is not None:
+            narration_limitation = (
+                f"Narration audio was generated with Edge TTS voice "
+                f"{narration_audio.voice!r} "
+                f"({narration_audio.duration_seconds:.1f}s, free, no API key). "
+                "Live synthesis is unverified on this machine "
+                "(speech.platform.bing.com is blocked by the network proxy); "
+                "the voice was verified by mixing, not by listening — QA "
+                "cannot hear a voice. Edge TTS is an unofficial client of "
+                "Microsoft's endpoint with no SLA; check the commercial-use "
+                "terms before publishing narrated videos.")
+        elif narration_failure is not None:
+            narration_limitation = (
+                f"Narration synthesis failed and the render fell back to a "
+                f"silent narration track: {narration_failure} The narration "
+                "script exists and the captions carry it, but no voice is "
+                "claimed. Re-running may succeed if the endpoint recovers.")
+        else:
+            narration_limitation = (
+                f"Narration audio is not generated: {narration_provider.detail} "
+                "The render's audio track is silence (plus the source clips' "
+                "own audio); the narration script exists and the captions "
+                "carry it, but no voice is claimed.")
         limitations = [
-            f"Narration audio is not generated: {narration_provider.detail} "
-            "The render's audio track is silence (plus the source clips' "
-            "own audio); the narration script exists and the captions "
-            "carry it, but no voice is claimed.",
+            narration_limitation,
             "No licensed music library is configured: the render has no "
             "background music unless PROD_MUSIC_DIR holds a licensed "
             "file that probes as audio.",

@@ -1,4 +1,4 @@
-# RANKFLOW AI — Central Orchestrator (Prompt 02)
+# Momentrix AI — Central Orchestrator (Prompt 02)
 
 The orchestrator is the only component that runs jobs. It accepts a
 topic, creates a job, hands one validated task at a time to the

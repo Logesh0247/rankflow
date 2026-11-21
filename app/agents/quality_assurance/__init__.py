@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent (Prompt 09).
 
 Inspects the actual rendered video and decides whether it is
 suitable for final user review. Built in Prompt 09; registered

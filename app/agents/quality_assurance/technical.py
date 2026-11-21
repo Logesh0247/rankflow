@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 1: file validation (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 1: file validation (Prompt 09).
 
 Re-reads the finished MP4 with ffprobe and a full decode check —
 the same real checks Production's render validation uses, run

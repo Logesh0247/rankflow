@@ -1,4 +1,4 @@
-# RANKFLOW AI — Final Audit Report (Prompt 12)
+# Momentrix AI — Final Audit Report (Prompt 12)
 
 **Date:** 2026-11-20
 **Scope:** all 12 prompts — foundation through production deployment.

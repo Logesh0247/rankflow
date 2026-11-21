@@ -1,4 +1,4 @@
-# RANKFLOW AI — Creative Director Agent (Prompt 07)
+# Momentrix AI — Creative Director Agent (Prompt 07)
 
 Transforms the five ranked moments into a cohesive, entertaining,
 original YouTube Shorts concept: a #5-to-#1 countdown with a

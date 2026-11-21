@@ -1,7 +1,8 @@
-# RANKFLOW AI — Render deployment (one-click via render.yaml).
+# Momentrix AI — Render deployment (one-click via render.yaml).
 #
-# Deploy: open https://render.com/deploy?repo=https://github.com/Logesh0247/rankflow-ai
+# Deploy: open https://render.com/deploy?repo=https://github.com/Logesh0247/rankflow
 # and Render builds this Dockerfile and runs it. No code changes needed.
+# Once live, the app is at https://momentrix.onrender.com.
 #
 # Notes, read before relying on the free plan:
 # - Render injects $PORT; the Dockerfile binds to it (default 8000 locally).
@@ -16,7 +17,7 @@
 #   it behind authentication before sharing it.
 services:
   - type: web
-    name: rankflow-ai
+    name: momentrix
     env: docker
     plan: free
     dockerfilePath: ./Dockerfile

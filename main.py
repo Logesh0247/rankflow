@@ -1,4 +1,4 @@
-"""RANKFLOW AI entrypoint (Prompt 08).
+"""Momentrix AI entrypoint (Prompt 08).
 
 FastAPI app: health check, job creation/listing, orchestrator runs,
 the Research Agent (Prompt 03), the Rights Verification Agent
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="0.10.0", debug=settings.app_debug, lifespan=lifespan)
+app = FastAPI(title="Momentrix", version="0.10.0", debug=settings.app_debug, lifespan=lifespan)
 # Prompt 12, Phase 5: per-IP rate limiting (600/min by default).
 app.add_middleware(RateLimitMiddleware, limiter=RateLimiter(settings.rate_limit_per_minute))
 app.include_router(health_routes.router)
@@ -80,7 +80,7 @@ app.include_router(quality_assurance_routes.router)
 app.include_router(review_routes.router)
 app.include_router(system_status_routes.router)
 
-# Prompt 11 UI — the RANKFLOW space, served same-origin so it talks
+# Prompt 11 UI — the Momentrix space, served same-origin so it talks
 # to this real backend (no separate host, no simulated data).
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -95,5 +95,5 @@ async def _rankflow_error(request: Request, exc: RankflowError) -> JSONResponse:
 
 @app.get("/")
 def root() -> dict:
-    return {"app": settings.app_name, "version": "0.10.0",
+    return {"app": "Momentrix", "version": "0.10.0",
             "status": "all seven agents ready — research + rights + video_intelligence + ranking + creative_director + production + quality_assurance, see README.md"}

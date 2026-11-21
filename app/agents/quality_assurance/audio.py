@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 4: audio inspection (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 4: audio inspection (Prompt 09).
 
 One FFmpeg pass over the audio track measures, with
 ``volumedetect``, ``silencedetect`` and ``loudnorm``:

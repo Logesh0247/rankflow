@@ -1,4 +1,4 @@
-"""Security helpers for RANKFLOW AI.
+"""Security helpers for Momentrix AI.
 
 - API keys are read only from environment variables (see core.config).
 - Uploaded / generated files must stay inside the configured storage

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Research Agent, Phase 1: topic understanding (Prompt 03).
+"""Momentrix AI — Research Agent, Phase 1: topic understanding (Prompt 03).
 
 Deterministic and rule-based, not an LLM call: no Muse AI key or
 endpoint is configured in this environment (see docs/ARCHITECTURE.md),

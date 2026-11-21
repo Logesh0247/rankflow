@@ -1,4 +1,4 @@
-# RANKFLOW AI — Research Agent (Prompt 03)
+# Momentrix AI — Research Agent (Prompt 03)
 
 The first real agent. It takes a topic, understands it, discovers
 candidate videos from permitted providers, scores and deduplicates

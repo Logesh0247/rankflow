@@ -13,7 +13,7 @@ def test_config_defaults():
     from app.core.config import Settings
 
     s = Settings(database_url="sqlite:////tmp/x.db")
-    assert s.app_name == "RANKFLOW AI"
+    assert s.app_name == "Momentrix"
     assert s.is_sqlite is True
     assert s.is_postgres is False
     assert s.storage_backend == "local"
@@ -203,7 +203,7 @@ def test_api_health_and_jobs():
         health = client.get("/health")
         assert health.status_code == 200
         body = health.json()
-        assert body["app"] == "RANKFLOW AI"
+        assert body["app"] == "Momentrix"
         assert body["database_ok"] is True
         assert body["ffmpeg_ok"] is True
 

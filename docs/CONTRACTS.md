@@ -1,4 +1,4 @@
-# RANKFLOW AI — Shared Data Contracts (Prompt 01)
+# Momentrix AI — Shared Data Contracts (Prompt 01)
 
 Source: `app/schemas/schemas.py` (Pydantic v2). Every agent exchanges
 these models, never ad-hoc dicts. Validation happens on construction.

@@ -53,9 +53,16 @@ KNOWN_SCENES = "data/known_footage/known_scenes.mp4"
 
 
 def _settings(**overrides) -> Settings:
+    # TTS is disabled by default in these tests: the no-voice path
+    # must stay covered, and a live Edge TTS attempt would make
+    # verdicts depend on whether speech.platform.bing.com is
+    # reachable from the machine running the suite (it is blocked
+    # on this VM). The generated-voice path is covered by the
+    # stubbed-narration tests below, which enable TTS explicitly.
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 30.0,
-            "rights_fetch_ia_metadata": False}
+            "rights_fetch_ia_metadata": False,
+            "tts_enabled": False}
     base.update(overrides)
     return Settings(**base)
 
@@ -327,17 +334,45 @@ def test_card_graphics_filters_centre_lines(tmp_path):
 
 
 # ---------------------------------------------------------------- Phase 4: narration
-def test_narration_provider_is_none_in_this_environment():
+def test_narration_provider_is_edge_tts_by_default():
+    provider = detect_narration_provider(Settings())
+    assert provider.provider == "edge-tts"
+    assert provider.status == "edge_tts"
+    assert provider.voice == "en-US-GuyNeural"
+
+
+def test_narration_provider_is_none_when_tts_disabled():
     provider = detect_narration_provider(_settings())
     assert provider.provider == "none"
     assert provider.status == "not_configured"
-    assert "no TTS provider" in provider.detail
+    assert "no TTS provider" in provider.detail or "disabled" in provider.detail
 
 
-def test_generate_narration_audio_fails_honestly(tmp_path):
+def test_generate_narration_audio_fails_honestly_when_disabled(tmp_path):
     with pytest.raises(ExternalServiceError, match="narration audio cannot be generated"):
         generate_narration_audio("Number five. A sharp segment.",
                                  str(tmp_path / "narr.mp3"), _settings())
+
+
+def test_generate_narration_audio_failure_is_honest(monkeypatch, tmp_path):
+    """A synthesis endpoint failure raises — it never writes a
+    fake file. (The stub stands in for the live endpoint, which
+    is unreachable from this machine.)"""
+    import edge_tts
+
+    class _Failing:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def save_sync(self, output_path):
+            raise RuntimeError("Cannot connect to host speech.platform.bing.com:443")
+
+    monkeypatch.setattr(edge_tts, "Communicate", _Failing)
+    out = tmp_path / "narr.mp3"
+    with pytest.raises(ExternalServiceError, match="narration audio cannot be generated"):
+        generate_narration_audio("Number five. A sharp segment.",
+                                 str(out), _settings(tts_enabled=True))
+    assert not out.is_file()
 
 
 # ---------------------------------------------------------------- Phase 7: audio
@@ -406,6 +441,51 @@ def test_concat_with_music_mixes_it_under(tmp_path):
     assert validation.valid, validation.issues
 
 
+def test_concat_with_narration_mixes_it_over(tmp_path):
+    """Narration is the primary track: a tone narration file mixed
+    over a silent clip must make the output measurably non-silent,
+    at the segments' duration."""
+    from app.agents.quality_assurance.audio import analyse_audio
+
+    clip = extract_clip(KNOWN_SCENES, 5.0, 8.0, tmp_path / "a.mp4")
+    narration = tmp_path / "narration.mp3"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=3", "-c:a", "libmp3lame",
+                    "-q:a", "4", str(narration)], check=True)
+    out = tmp_path / "final.mp4"
+    concat_segments([clip.output_path], out, total_duration_seconds=3.0,
+                    narration_path=str(narration))
+    validation = validate_render(out, expected_duration_seconds=3.0)
+    assert validation.valid, validation.issues
+    audio = analyse_audio(out, duration_seconds=3.0)
+    assert audio.has_audio is True
+    assert audio.effectively_silent is False
+    assert audio.mean_volume_db is not None and audio.mean_volume_db > -70.0
+
+
+def _stub_narration_audio(script_text, output_path, settings, **kwargs):
+    """Test-only stand-in for Edge TTS synthesis: a real tone MP3
+    as long as the estimated narration, so mixing, loudness and QA
+    behave exactly as with a real voice file. Never used outside
+    tests; it stands in for the live endpoint, which is
+    unreachable from this machine."""
+    from app.agents.production.narration import (
+        NarrationAudio, narration_estimated_seconds,
+    )
+
+    seconds = max(1.0, narration_estimated_seconds(
+        script_text, words_per_minute=float(settings.cd_narration_wpm)))
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                    f"sine=frequency=440:duration={seconds:.2f}",
+                    "-c:a", "libmp3lame", "-q:a", "4", str(output_path)],
+                   check=True)
+    return NarrationAudio(
+        provider="edge-tts", voice=settings.tts_voice, status="generated",
+        file_path=str(output_path), duration_seconds=round(seconds, 2),
+        chars=len(script_text), chunks=1,
+        detail="stub narration (test only — stands in for Edge TTS)")
+
+
 # ---------------------------------------------------------------- service: happy path
 def test_service_renders_a_real_mp4_from_the_edl(engine, tmp_path):
     job = _new_job(engine)
@@ -444,6 +524,46 @@ def test_service_renders_a_real_mp4_from_the_edl(engine, tmp_path):
     probe = probe_video(report.file_path)
     assert probe.width == 1080 and probe.height == 1920
     assert decode_check(report.file_path) == []
+
+
+def test_service_renders_with_stubbed_narration_voice_and_passes_qa(engine, tmp_path, monkeypatch):
+    """The generated-voice path, end to end: with a stub standing
+    in for Edge TTS (the live endpoint is unreachable from this
+    machine), production mixes a real narration track into the
+    render, the manifest records it as generated, the audio is
+    measurably non-silent, and QA reaches `pass` — the verdict a
+    voiceless render can never reach. The semantic checks stay
+    `not_tested`: no VLM/OCR exists to verify wording against the
+    picture."""
+    import app.agents.production.service as production_service
+    from app.agents.quality_assurance.audio import analyse_audio
+    from app.agents.quality_assurance.service import QAService
+
+    monkeypatch.setattr(production_service, "generate_narration_audio",
+                        _stub_narration_audio)
+    job = _new_job(engine)
+    seeded = _seed_ranked_five(engine, job.id)
+    footage = _footage_map(engine, job.id, seeded, tmp_path)
+    report = ProductionService(engine, _settings(tts_enabled=True)).run(
+        job.id, footage_paths=footage)
+    assert report.narration["status"] == "generated"
+    assert report.narration["provider"] == "edge-tts"
+    assert report.narration["voice"] == "en-US-GuyNeural"
+    assert report.narration["audio_path"] is not None
+    assert report.narration["duration_seconds"] > 0
+    assert report.validation["valid"] is True
+    audio = analyse_audio(report.file_path, duration_seconds=report.duration_seconds)
+    assert audio.has_audio is True
+    assert audio.effectively_silent is False
+    assert audio.mean_volume_db is not None and audio.mean_volume_db > -70.0
+    qa = QAService(engine, _settings()).run(job.id)
+    assert qa.verdict == "pass", f"issues: {qa.issues}"
+    assert qa.status == "PASSED"
+    assert qa.issues == []
+    assert any(c["name"] == "narration_audio" and c["verdict"] == "pass"
+               for c in qa.checks)
+    assert any(c["name"] == "semantic_narration_accuracy" and c["verdict"] == "not_tested"
+               for c in qa.checks)
 
 
 def test_service_run_is_idempotent(engine, tmp_path):
@@ -522,9 +642,10 @@ def test_orchestrator_runs_real_production_then_qa(engine, tmp_path):
     """Full real pipeline: research (test provider) -> rights ->
     video intelligence (local footage) -> ranking -> creative
     director -> production -> quality assurance (Prompt 09).
-    QA verdict is needs_review, not pass: no TTS provider is
-    configured, so the render has no narration voice and
-    effectively silent audio."""
+    QA verdict is needs_review, not pass: TTS is disabled for
+    this test, so the render has no narration voice and
+    effectively silent audio. (With a real voice the same
+    pipeline reaches pass — see the stubbed-narration test.)"""
     job = _new_job(engine)
     colours = [(40, 160, 40), (40, 40, 180), (40, 200, 220), (120, 40, 20), (140, 140, 140)]
     sessions = sessionmaker(bind=engine)

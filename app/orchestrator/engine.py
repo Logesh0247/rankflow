@@ -1,4 +1,4 @@
-"""RANKFLOW AI — workflow engine (Prompt 02, Phases 3-5).
+"""Momentrix AI — workflow engine (Prompt 02, Phases 3-5).
 
 Runs jobs through the fixed stage sequence, one stage at a time,
 in-process and synchronously (no Redis/Celery broker exists in this

@@ -1,7 +1,7 @@
-"""RANKFLOW AI — Rights Verification Agent, Phase 1: licence catalogue (Prompt 04).
+"""Momentrix AI — Rights Verification Agent, Phase 1: licence catalogue (Prompt 04).
 
 The catalogue is the single source of truth for what a licence
-permits for RANKFLOW's intended use: taking a video, editing it
+permits for Momentrix's intended use: taking a video, editing it
 (cutting, reframing to 1080x1920, adding narration/captions) and
 republishing the result commercially as a YouTube Short.
 

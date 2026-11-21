@@ -1,4 +1,4 @@
-# RANKFLOW AI
+# Momentrix AI
 
 Autonomous multi-agent video production platform.
 
@@ -64,15 +64,17 @@ output, and presents the completed video for user approval.
 > volumedetect/loudnorm, rights re-check, content checks) and
 > reports `pass`, `needs_review` or `fail`. Video Production renders a real 1080×1920
 > MP4 (H.264/AAC) from the approved EDL — see `docs/PRODUCTION.md`.
-> Honest limits: no TTS provider is configured, so the render has
-> no narration voice (silent narration track, script + captions
-> carry the words); no licensed music/SFX library is configured,
+> Honest limits: narration is synthesised with Edge TTS by
+> default (free, no API key), but live synthesis is unverified
+> on this machine — the network proxy blocks the Edge endpoint,
+> so renders here fall back to a silent narration track; no
+> licensed music/SFX library is configured,
 > so there is no background music and no mixed SFX; transitions
 > are explicit black gap segments, not true xfades. A search result is discovery only — reuse
 > permission is established by Rights, never assumed, and
 > unapproved footage is never analysed, ranked or used in a story.
 
-**Prompt 11 — User Interface complete.** The RANKFLOW space is the
+**Prompt 11 — User Interface complete.** The Momentrix space is the
 Creator Studio dashboard at `GET /ui/` (served by this same
 backend, same origin — no simulated data): Home with topic input +
 Generate, Production Dashboard with real stage progress, Final
@@ -92,9 +94,9 @@ Measured performance: seek-based frame sampling (120 s clip
 indexes added on storyboards / narrations / edit_instructions
 (migration 011). Cost monitoring: `cost_events` table,
 `CostService`, `GET /jobs/{id}/cost` and `GET /cost/summary`
-(compute $0.10/CPU-hour, storage $0.023/GB-month; TTS and
-licensed audio are $0 because those features are absent, not
-free). Reliability: online DB backups (`scripts/backup_db.py`),
+(compute $0.10/CPU-hour, storage $0.023/GB-month; TTS is $0
+because Edge TTS is free, not because narration is absent;
+licensed audio is $0 because no library is configured). Reliability: online DB backups (`scripts/backup_db.py`),
 storage validation at startup and at `GET /health/detailed`,
 failure notifications (log + optional webhook), deterministic
 QA failures never retried. Security: per-IP rate limiting
@@ -106,7 +108,11 @@ to the storage root. Deployment: `Dockerfile`,
 **9 PASS, 1 PARTIAL, 0 FAIL** — check (9) QA is PARTIAL
 (`needs_review`: no TTS voice, audio effectively silent), all
 other checks pass; full detail in `docs/ACCEPTANCE.md` and
-`docs/FINAL_AUDIT.md`.
+`docs/FINAL_AUDIT.md`. (That acceptance run predates Edge TTS:
+with a generated narration voice the same pipeline reaches QA
+`pass`, proven with a stubbed synthesiser in
+`tests/test_production.py`; live synthesis still needs
+verification on the deploy host.)
 
 ## Quick start
 
@@ -275,15 +281,17 @@ tests/ docs/ scripts/ config/ main.py requirements.txt .env.example
 - No PostgreSQL or Redis server in this environment — SQLite is the
   local-testing fallback, labelled as such. Postgres is configured
   by `DATABASE_URL` when a server exists.
-- No YouTube / Muse AI / TTS / speech / S3 integration is configured
+- No YouTube / Muse AI / speech / S3 integration is configured
   or verified. YouTube discovery exists as code but is disabled
   without a `YOUTUBE_API_KEY`; the live discovery provider is the
   Internet Archive (public archive, not a YouTube replacement —
   relevance ≈ 0.52 for broad topics, 0.84 for exact ones).
-  Video Production has no TTS provider and no licensed music/SFX
-  library configured: renders are silent except for source-clip
-  audio, with no narration voice and no background music — see
-  `docs/PRODUCTION.md` for the exact labelled fallbacks.
+  Video Production synthesises narration with Edge TTS (free, no
+  API key) by default, but live synthesis is unverified on this
+  machine — the network proxy blocks the Edge endpoint, so
+  renders here fall back to a silent narration track. No licensed
+  music/SFX library is configured: renders have no background
+  music — see `docs/PRODUCTION.md` for the exact labelled fallbacks.
 - Most Internet Archive items publish no licence, so Rights marks
   them `needs_review` — by design. A job with no licenced
   candidates fails at rights until a human supplies evidence via

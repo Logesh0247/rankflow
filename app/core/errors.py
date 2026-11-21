@@ -1,4 +1,4 @@
-"""Error-handling standards for RANKFLOW AI.
+"""Error-handling standards for Momentrix AI.
 
 Agents and API routes raise these typed errors; the API layer maps
 them to HTTP status codes. Error bodies never leak secrets, stack

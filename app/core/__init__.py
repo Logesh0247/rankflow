@@ -1,1 +1,1 @@
-"""RANKFLOW AI core package."""
+"""Momentrix AI core package."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RANKFLOW AI — environment inspection (Phase 1, re-runnable).
+"""Momentrix AI — environment inspection (Phase 1, re-runnable).
 
 Prints what is actually present in this environment: Python, installed
 packages, FFmpeg/OpenCV, database and Redis availability, and which

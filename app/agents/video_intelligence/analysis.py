@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent, Phases 3-4: analysis (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent, Phases 3-4: analysis (Prompt 05).
 
 Deterministic heuristic analyser over the measured frame signals
 from ``frames.py``. It segments a video at its scene boundaries,

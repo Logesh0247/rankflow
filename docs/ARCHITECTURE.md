@@ -1,8 +1,8 @@
-# RANKFLOW AI — Architecture (Prompt 01)
+# Momentrix AI — Architecture (Prompt 01)
 
 ## Objective
 
-RANKFLOW AI accepts a single topic, discovers eligible video sources,
+Momentrix AI accepts a single topic, discovers eligible video sources,
 identifies interesting moments, ranks five moments from five different
 source videos, creates a professionally edited YouTube Short, validates
 the output, and presents the completed video for user approval.

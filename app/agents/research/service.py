@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Research Agent, Phases 5-6: persistence + orchestration (Prompt 03).
+"""Momentrix AI — Research Agent, Phases 5-6: persistence + orchestration (Prompt 03).
 
 Flow for one job:
   topic -> SearchPlan (topic.py) -> providers (providers.py, in order,

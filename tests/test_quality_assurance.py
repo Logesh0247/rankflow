@@ -48,9 +48,16 @@ ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 
 
 def _settings(**overrides) -> Settings:
+    # TTS is disabled by default in these tests: the no-voice path
+    # must stay covered, and a live Edge TTS attempt would make
+    # verdicts depend on whether speech.platform.bing.com is
+    # reachable from the machine running the suite (it is blocked
+    # on this VM). The generated-voice path is covered by the
+    # stubbed-narration test in test_production.py.
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 300.0,
-            "rights_fetch_ia_metadata": False}
+            "rights_fetch_ia_metadata": False,
+            "tts_enabled": False}
     base.update(overrides)
     return Settings(**base)
 
@@ -532,7 +539,9 @@ def test_repair_requests_route_to_owning_component():
 def pass_job(engine, tmp_path_factory):
     """A job with a crafted, valid render: 1080x1920 testsrc2 with
     tone audio, manifest saying narration was generated and music
-    is included. The only way to reach PASSED without a TTS provider."""
+    is included. The crafted way to reach PASSED; a real render
+    with a generated narration voice reaches it the same way (see
+    the stubbed-narration test in test_production.py)."""
     tmp = tmp_path_factory.mktemp("qa-pass")
     job = _new_job(engine)
     _seed_ranked_five(engine, job.id)
@@ -562,7 +571,7 @@ def test_service_passes_crafted_render(engine, pass_job):
 @pytest.fixture(scope="session")
 def prod_job(engine, tmp_path_factory):
     """A job rendered by the real ProductionService (2s moments,
-    ~19s Short). No TTS provider exists, so QA must say
+    ~19s Short). TTS is disabled for this fixture, so QA must say
     needs_review — narration missing, audio effectively silent —
     never pass."""
     tmp = tmp_path_factory.mktemp("qa-prod")
@@ -705,7 +714,8 @@ def test_orchestrator_completes_full_pipeline_with_qa(engine, tmp_path):
     """A plain job run now completes: research -> rights -> video
     intelligence -> ranking -> creative director -> production ->
     quality assurance -> COMPLETED / awaiting_approval, with the
-    QA report saying needs_review (no narration voice)."""
+    QA report saying needs_review (TTS is disabled for this test,
+    so there is no narration voice)."""
     job = _new_job(engine)
     colours = [(40, 160, 40), (40, 40, 180), (40, 200, 220), (120, 40, 20), (140, 140, 140)]
     sessions = sessionmaker(bind=engine)

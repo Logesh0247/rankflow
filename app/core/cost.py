@@ -1,4 +1,4 @@
-"""RANKFLOW AI — cost monitoring (Prompt 12, Phase 3).
+"""Momentrix AI — cost monitoring (Prompt 12, Phase 3).
 
 Every unit of work a job consumes is recorded as a CostEvent and
 priced with the explicit rates below. Nothing is assumed free
@@ -13,13 +13,14 @@ except what is actually free:
   free inside the daily quota ($0.00, quota-limited, not
   unlimited). A provider that starts charging must set its
   unit cost here — a call is never silently priced at zero.
-* TTS / narration audio — $0.00 because no TTS provider is
-  configured and no narration audio is generated. This is an
-  absent feature, not a free one: the moment a TTS provider is
-  configured, its per-character rate goes in TTS_USD_PER_1000_CHARS
-  and events are recorded by the narration step.
-* Licensed music / SFX — $0.00, same reason: no licensed library
-  is configured, so no licensed audio is used.
+* TTS / narration audio — $0.00 because Edge TTS is free (no API
+  key, no account, no per-character charge). This is a free
+  feature, not an absent one: synthesis events are recorded by
+  the narration step with quantity = characters synthesised and
+  unit cost $0. The moment a paid TTS provider is configured,
+  its per-character rate goes in TTS_USD_PER_1000_CHARS.
+* Licensed music / SFX — $0.00, same reason as before: no licensed
+  library is configured, so no licensed audio is used.
 * Storage — measured live from the files a job actually owns
   (rendered MP4 + thumbnails + segments), priced at
   STORAGE_USD_PER_GB_MONTH. Storage is reported, not stored as
@@ -46,7 +47,7 @@ logger = get_logger("cost")
 # --- Rates (documented planning assumptions; see docs/DEPLOYMENT.md) ---
 COMPUTE_USD_PER_CPU_HOUR = 0.10  # small 2-vCPU cloud host, ~$0.05/vCPU-hour
 STORAGE_USD_PER_GB_MONTH = 0.023  # object-storage list price
-TTS_USD_PER_1000_CHARS = 0.0  # NO TTS PROVIDER CONFIGURED — see module docstring
+TTS_USD_PER_1000_CHARS = 0.0  # EDGE TTS IS FREE — no key, no per-character charge
 MUSIC_SFX_USD_PER_JOB = 0.0  # NO LICENSED AUDIO LIBRARY CONFIGURED
 
 # External API unit costs ($ per call). Internet Archive is free;
@@ -117,6 +118,18 @@ class CostService:
                     quantity=1.0, unit="calls",
                     unit_cost_usd=API_UNIT_COST_USD.get(provider, 0.0))
 
+    def record_tts(self, job_id: str, *, chars: int,
+                   label: str = "edge-tts narration (free, no API key)") -> None:
+        """One narration synthesis, priced at the Edge TTS rate ($0).
+
+        Edge TTS charges nothing per character, so the amount is
+        always $0 — recorded anyway so the cost summary can show
+        that narration ran and what it cost, instead of silence
+        about a feature that is free rather than absent."""
+        self.record(job_id, category="tts", label=label,
+                    quantity=float(chars), unit="chars",
+                    unit_cost_usd=TTS_USD_PER_1000_CHARS / 1000.0)
+
     def job_cost(self, job_id: str) -> JobCostSummary:
         """Cost of one job from its recorded events + live storage size."""
         from app.models.models import RenderedVideo
@@ -165,8 +178,12 @@ class CostService:
             f"priced at ${COMPUTE_USD_PER_CPU_HOUR:.2f}/CPU-hour (see docs/DEPLOYMENT.md).",
         ]
         if tts_chars == 0:
-            notes.append("TTS cost is $0 because no TTS provider is configured — "
-                         "narration audio is not generated, not free.")
+            notes.append("No TTS synthesis ran for this job — narration "
+                         "audio was not generated (TTS disabled, not "
+                         "configured, or synthesis failed).")
+        else:
+            notes.append(f"TTS cost is $0 for {tts_chars} chars: Edge TTS "
+                         "is free (no API key, no per-character charge).")
         return JobCostSummary(
             job_id=job_id, compute_seconds=round(compute_seconds, 2),
             compute_usd=round(compute_usd, 4), api_calls=api_calls,
@@ -198,7 +215,9 @@ class CostService:
             "notes": [
                 "No external API spend has been recorded: Internet Archive "
                 "searches are free and no paid provider is configured.",
-                "TTS and licensed audio cost $0 because those features are "
-                "absent (no provider / no library), not because they are free.",
+                "TTS cost is $0 because Edge TTS is free (no API key, no "
+                "per-character charge) — not because narration is absent. "
+                "Licensed audio cost is $0 because no licensed library is "
+                "configured.",
             ],
         }

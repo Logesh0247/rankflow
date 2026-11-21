@@ -1,4 +1,4 @@
-# RANKFLOW AI — Complete System Integration (Prompt 10)
+# Momentrix AI — Complete System Integration (Prompt 10)
 
 All seven agents are real and run as one autonomous workflow under
 the central orchestrator. A user submits a topic and nothing else;

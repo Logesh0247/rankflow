@@ -1,6 +1,6 @@
 # Prompt 11 — User Interface
 
-The RANKFLOW space: a Creator Studio dashboard in the style of the
+The Momentrix space: a Creator Studio dashboard in the style of the
 user's reference image (dark theme, purple accent), served by the
 same FastAPI backend it talks to — same origin, no separate host,
 no simulated data.
@@ -22,14 +22,14 @@ Sidebar (reference order, reference labels): Overview, Projects,
 Campaigns, Content Library, Templates, Brand Kit, Avatars,
 Workflows, Analytics, Team, Settings.
 
-| Sidebar item | RANKFLOW page | Real data |
+| Sidebar item | Momentrix page | Real data |
 |---|---|---|
 | Overview | Home | Hero, topic input + Generate, Recent Projects (`GET /jobs`), Activity from job history, agent tools with live health (`GET /agents`), asset cards (hook / top moment / video / narration / QA verdict), 5-step workflow strip (Brief & Plan → Create & Generate → Review & Approve → Publish & Distribute → Measure & Optimise) with the latest job's stage highlighted |
 | Projects | Job History | `GET /jobs` table: topic, status, stage, created, error |
 | Campaigns / Workflows | Production Dashboard | Job picker, progress from `current_stage` (7 stages), active agent, stage checklist, completed/failed tasks from `GET /jobs/{id}/history`, QA warnings, Resume / Cancel |
 | Content Library | Final Video Review | `<video>` from `GET /jobs/{id}/rendered-video/download`, topic, duration, resolution, QA verdict/issues/warnings, ranking #1–#5 with scores, narration script, Download / Approve / Reject & Regenerate |
 | Templates | Home | Topic input with three example topics (real topics used in research tests) |
-| Brand Kit / Avatars / Analytics / Team | Honest scope page | States plainly that RANKFLOW has no brand kit, avatar studio, analytics, or team features — no fake data is shown |
+| Brand Kit / Avatars / Analytics / Team | Honest scope page | States plainly that Momentrix has no brand kit, avatar studio, analytics, or team features — no fake data is shown |
 | Settings | Settings | `GET /settings/status` + `GET /health` |
 
 ## New backend endpoints (Prompt 11)
@@ -64,7 +64,7 @@ the render, Approve or Reject & Regenerate.
 
 The same UI exists as a Muse space (static artifact). It is the
 same code, with the API base overridable via `?api=`. It can only
-show live data when the RANKFLOW backend is reachable from the
+show live data when the Momentrix backend is reachable from the
 browser it runs in; otherwise it shows "Backend unreachable" and
 never invents jobs, videos, or progress. The authoritative UI is
 the one served by the backend at `/ui/`.

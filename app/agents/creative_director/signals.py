@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent, Phase 1: creative planning inputs (Prompt 07).
+"""Momentrix AI — Creative Director Agent, Phase 1: creative planning inputs (Prompt 07).
 
 Reads a ranked moment's measured signals out of its
 AnalyzedMoment row — the same labels Video Intelligence wrote

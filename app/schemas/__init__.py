@@ -1,4 +1,4 @@
-"""RANKFLOW AI schemas package."""
+"""Momentrix AI schemas package."""
 from app.schemas.schemas import (
     AgentResponse,
     AgentTask,

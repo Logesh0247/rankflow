@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Rights Verification Agent, Phase 5: attribution (Prompt 04).
+"""Momentrix AI — Rights Verification Agent, Phase 5: attribution (Prompt 04).
 
 Attribution is generated from the stored evidence, never invented:
 title and creator come from the Research candidate, the licence

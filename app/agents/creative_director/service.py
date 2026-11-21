@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent, Phases 1-7: service (Prompt 07).
+"""Momentrix AI — Creative Director Agent, Phases 1-7: service (Prompt 07).
 
 Flow for one job:
   RankingResult rows (exactly five, ranks 1-5, five sources)

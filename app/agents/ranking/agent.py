@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Ranking Agent executor (Prompt 06, Phase 6).
+"""Momentrix AI — Ranking Agent executor (Prompt 06, Phase 6).
 
 The callable the orchestrator registers for the ``ranking``
 agent. It takes an OrchestratorTask dict (as the engine hands

@@ -1,4 +1,4 @@
-"""RANKFLOW AI storage — local filesystem backend (Prompt 01).
+"""Momentrix AI storage — local filesystem backend (Prompt 01).
 
 Interface: `LocalStorage` implements `put / get_path / exists / delete`
 under a single root directory. An S3-compatible backend is an

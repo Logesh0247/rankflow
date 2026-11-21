@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent executor (Prompt 05, Phase 6).
+"""Momentrix AI — Video Intelligence Agent executor (Prompt 05, Phase 6).
 
 The callable the orchestrator registers for the
 ``video_intelligence`` agent. It takes an OrchestratorTask dict (as

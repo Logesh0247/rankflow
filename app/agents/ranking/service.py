@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Ranking Agent, Phases 4-6: service (Prompt 06).
+"""Momentrix AI — Ranking Agent, Phases 4-6: service (Prompt 06).
 
 Flow for one job:
   AnalyzedMoment rows (from Video Intelligence)

@@ -1,4 +1,4 @@
-"""Logging configuration for RANKFLOW AI.
+"""Logging configuration for Momentrix AI.
 
 Single JSON-ish plain-text format, one logger per module, level from
 settings. Never log API keys, tokens or full file contents: a

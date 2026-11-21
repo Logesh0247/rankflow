@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Rights Verification Agent, Phases 2, 5, 6: service (Prompt 04).
+"""Momentrix AI — Rights Verification Agent, Phases 2, 5, 6: service (Prompt 04).
 
 Flow for one job:
   candidates (from Research) -> for each candidate:

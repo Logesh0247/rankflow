@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 5: rights validation (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 5: rights validation (Prompt 09).
 
 Re-checks, server-side and at QA time, that every source used
 in the render — and every audio asset mixed into it — still has

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialise the RANKFLOW AI database (creates all tables)."""
+"""Initialise the Momentrix AI database (creates all tables)."""
 from __future__ import annotations
 
 import sys

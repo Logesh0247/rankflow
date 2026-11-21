@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 2: content validation (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 2: content validation (Prompt 09).
 
 Checks the rendered video against the plan that produced it —
 the Edit Decision List, the ranking, the analysed moments and

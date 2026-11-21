@@ -1,4 +1,4 @@
-# RANKFLOW AI — Architecture Audit (Prompt 12, Phase 1)
+# Momentrix AI — Architecture Audit (Prompt 12, Phase 1)
 
 Audited 2026-11-20 against the Prompt 11 codebase (252 tests
 passing). Every claim below was checked in the code or measured;

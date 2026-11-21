@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Rights Verification Agent executor (Prompt 04, Phase 6).
+"""Momentrix AI — Rights Verification Agent executor (Prompt 04, Phase 6).
 
 The callable the orchestrator registers for the ``rights`` agent.
 It takes an OrchestratorTask dict (as the engine hands it over),

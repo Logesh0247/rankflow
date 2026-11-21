@@ -1,4 +1,4 @@
-# RANKFLOW AI — production image (Prompt 12, Phase 6)
+# Momentrix AI — production image (Prompt 12, Phase 6)
 FROM python:3.12-slim
 
 # FFmpeg + fonts (captions/graphics use DejaVu) + sqlite3 CLI for backups.
@@ -18,7 +18,9 @@ RUN rm -f .env && mkdir -p data/storage data/backups
 ENV APP_ENV=production
 EXPOSE 8000
 
-# Migrations run first (idempotent), then the API. One worker: the
+# Create all tables first (fresh deploys start with an empty database —
+# the migrations below only ALTER existing tables), then run the
+# migrations (idempotent), then the API. One worker: the
 # orchestrator runs jobs in-process, so a second worker would run
 # the same job twice.
-CMD ["sh", "-c", "python scripts/migrate_all.py && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+CMD ["sh", "-c", "python scripts/init_db.py && python scripts/migrate_all.py && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

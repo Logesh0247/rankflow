@@ -34,6 +34,8 @@ class SettingsStatus(BaseModel):
     youtube_configured: bool
     tts_provider: str
     tts_configured: bool
+    tts_voice: str
+    tts_enabled: bool
     music_library_configured: bool
     sfx_library_configured: bool
     video_output: dict = Field(default_factory=dict)
@@ -59,7 +61,7 @@ def settings_status() -> SettingsStatus:
     except Exception:
         agents = []
     return SettingsStatus(
-        app_name=settings.app_name,
+        app_name="Momentrix",
         app_env=settings.app_env,
         database="postgresql" if settings.is_postgres else "sqlite (local)",
         storage_backend=settings.storage_backend,
@@ -70,7 +72,14 @@ def settings_status() -> SettingsStatus:
         research_provider=settings.research_provider,
         youtube_configured=bool(settings.youtube_api_key),
         tts_provider=settings.tts_provider or "not configured",
-        tts_configured=bool(settings.tts_provider and settings.tts_api_key),
+        # Edge TTS needs no API key: configured = enabled + named.
+        # Any other provider still needs a key to count as configured.
+        tts_configured=bool(
+            settings.tts_enabled
+            and (settings.tts_provider == "edge-tts"
+                 or (settings.tts_provider and settings.tts_api_key))),
+        tts_voice=settings.tts_voice or "",
+        tts_enabled=settings.tts_enabled,
         music_library_configured=bool(settings.prod_music_dir),
         sfx_library_configured=bool(settings.prod_sfx_dir),
         video_output={"width": 1080, "height": 1920, "fps": 30,

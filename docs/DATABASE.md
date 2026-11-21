@@ -1,4 +1,4 @@
-# RANKFLOW AI — Database Design (Prompt 01)
+# Momentrix AI — Database Design (Prompt 01)
 
 13 tables, generated from `app/models/models.py`.
 PostgreSQL DDL: `app/database/schema.sql`.

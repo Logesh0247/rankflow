@@ -44,10 +44,17 @@ TOPIC = "TOP 5 CRAZIEST PARKOUR FAILS"
 
 
 def _settings(**overrides) -> Settings:
+    # TTS is disabled by default in these tests: the no-voice path
+    # must stay covered, and a live Edge TTS attempt would make
+    # verdicts depend on whether speech.platform.bing.com is
+    # reachable from the machine running the suite (it is blocked
+    # on this VM). The generated-voice path is covered by the
+    # stubbed-narration test in test_production.py.
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 300.0,
             "rights_fetch_ia_metadata": False,
-            "research_provider": "test"}
+            "research_provider": "test",
+            "tts_enabled": False}
     base.update(overrides)
     return Settings(**base)
 
@@ -151,7 +158,8 @@ def test_end_to_end_topic_only_run(engine, tmp_path):
     job runs research -> rights -> video intelligence -> ranking
     -> creative director -> production -> quality assurance and
     ends awaiting_approval with a real 1080x1920 render and a QA
-    report (needs_review: no narration voice exists yet)."""
+    report (needs_review: TTS is disabled for this test, so no
+    narration voice exists yet)."""
     job = _new_job(engine)
     _seed_five_sources(engine, job, tmp_path)
     finished = _run_real(engine, job.id)

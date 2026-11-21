@@ -29,16 +29,31 @@ graphics, audio design, rendering, and render validation.
    the frame; the crop window is always even-sized and inside
    the source.
 4. **Narration** — the narration script from the Creative Director
-   plan is carried in the manifest with a word count and a
-   duration estimate at the configured words-per-minute. There is
-   **no TTS provider configured** (`TTS_PROVIDER` / `TTS_API_KEY`
-   empty) and **no local TTS binary is installed** in this
-   environment, so no narration audio is generated: the render
-   gets a silent narration track, and the report status is
-   `not_generated_no_tts_provider`. No voice is ever claimed.
-   If a provider is configured later, `narration.py` is the
-   integration point; duration checks and narration sync are
-   specified there.
+   plan is synthesised to MP3 with **Edge TTS** (``edge-tts``,
+   Microsoft Edge neural voices — free, no API key, no account)
+   at the configured voice (default ``en-US-GuyNeural``,
+   alternative ``en-US-JennyNeural``; `TTS_VOICE`,
+   `TTS_PROVIDER=edge-tts`, `TTS_ENABLED=true`). The script is
+   split into sentence chunks (≤900 chars) and each chunk is
+   synthesised separately, then joined with FFmpeg into one MP3
+   that starts at t=0 and is mixed over the full timeline as the
+   primary track (music, when present, stays at low volume under
+   it). The manifest records voice, duration, character count and
+   chunk count with status ``generated``. **Failure is fail-soft:**
+   if synthesis fails (endpoint down, rate-limited, or blocked —
+   live synthesis is UNVERIFIED on this machine because the
+   network proxy blocks `speech.platform.bing.com`), the render
+   falls back to a silent narration track, the manifest records
+   status ``generation_failed`` with the reason, and QA reports
+   `needs_review` — a TTS failure never hard-fails a job. The
+   narration script, word count and duration estimate are always
+   in the manifest, and captions carry the words on screen.
+   Commercial-use caveat: edge-tts is an unofficial client of
+   Microsoft's endpoint with no SLA and possible rate-limiting —
+   check the commercial-use terms before publishing narrated
+   videos. If Edge TTS proves unreliable, the documented
+   fallback is Piper (fully offline, needs a voice model
+   downloaded, less natural voice).
 5. **Captions** — the Creative Director caption plan is rendered
    as an ASS file per segment and burned in with libass
    (DejaVu Sans Bold, 54 px, centred bottom third, max 40
@@ -97,7 +112,9 @@ graphics, audio design, rendering, and render validation.
 `PROD_CAPTION_FONT_SIZE=54`, `PROD_CAPTION_MAX_CHARS=40`,
 `PROD_MUSIC_DUCKING_DB=-10.0`, `PROD_LOUDNESS_TARGET_LUFS=-14.0`,
 `PROD_RENDER_TIMEOUT_SECONDS=300.0`, `PROD_FFMPEG_TIMEOUT_SECONDS=120.0`,
-`PROD_OUTPUT_FPS=30.0`, `PROD_CRITICAL_FAILURE_TIMEOUT_SECONDS=5.0`
+`PROD_OUTPUT_FPS=30.0`, `PROD_CRITICAL_FAILURE_TIMEOUT_SECONDS=5.0`,
+`TTS_PROVIDER=edge-tts`, `TTS_VOICE=en-US-GuyNeural`,
+`TTS_ENABLED=true`, `TTS_TIMEOUT_SECONDS=120.0`
 (see `.env.example`).
 
 ## Verification (Prompt 08)
@@ -131,10 +148,14 @@ narration `not_generated_no_tts_provider`, music and SFX
 
 ## Known limitations
 
-- No TTS provider or key is configured and no local TTS binary is
-  installed, so renders have no narration voice. The narration
-  script, word count and duration estimate are in the manifest,
-  and captions carry the words on screen.
+- Narration is synthesised with Edge TTS by default, but **live
+  synthesis is unverified on this machine**: the network proxy
+  blocks `speech.platform.bing.com`, so every real synthesis
+  attempt here fails fast (~1s) and the render falls back to a
+  silent narration track with the reason recorded. Verify live
+  synthesis on the deploy host (Render) once its deploy is fixed.
+  Tests use a stubbed synthesiser and never claim a live voice
+  was heard.
 - No licensed music/SFX library is configured, so renders have no
   background music and no mixed SFX. SFX files are detected when
   configured but never mixed into the render.
@@ -150,6 +171,10 @@ narration `not_generated_no_tts_provider`, music and SFX
   raised above the 30s default (300s is used in tests).
 - Quality Assurance (Prompt 09) now inspects the render: a plain
   job run completes VIDEO_PRODUCTION, passes through QA and ends
-  `awaiting_approval` with a QA report. Because no TTS provider
-  is configured, the report is `needs_review` (narration missing,
+  `awaiting_approval` with a QA report. In the test suite TTS is
+  disabled, so the report is `needs_review` (narration missing,
   audio effectively silent) — see `docs/QUALITY_ASSURANCE.md`.
+  With Edge TTS synthesising (verified with a stubbed synthesiser
+  in `tests/test_production.py`), the same pipeline reaches QA
+  `pass`: narration status `generated`, audio measurably
+  non-silent.

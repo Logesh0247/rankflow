@@ -1,4 +1,4 @@
-"""RANKFLOW AI — agent registry (Prompt 02, Phase 2).
+"""Momentrix AI — agent registry (Prompt 02, Phase 2).
 
 The registry is the single place that knows the seven agents: their
 id, description, input/output schemas, execution method, status and

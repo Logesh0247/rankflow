@@ -1,4 +1,4 @@
-# RANKFLOW AI — local / single-host deployment (Prompt 12, Phase 6).
+# Momentrix AI — local / single-host deployment (Prompt 12, Phase 6).
 # One service: the API serves the backend AND the UI at /ui/.
 # SQLite is the default (data/ volume); uncomment the db service and
 # DATABASE_URL for PostgreSQL. No Redis is required — jobs run
@@ -6,8 +6,8 @@
 services:
   api:
     build: .
-    image: rankflow-ai:latest
-    container_name: rankflow-ai
+    image: momentrix:latest
+    container_name: momentrix
     env_file:
       - .env
     environment:

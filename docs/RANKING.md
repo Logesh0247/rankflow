@@ -1,4 +1,4 @@
-# RANKFLOW AI — Ranking Agent (Prompt 06)
+# Momentrix AI — Ranking Agent (Prompt 06)
 
 Selects the five most entertaining and compelling moments from
 five different source videos.

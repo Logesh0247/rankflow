@@ -1,4 +1,4 @@
-"""RANKFLOW AI — workflow states (Prompt 02, Phase 3).
+"""Momentrix AI — workflow states (Prompt 02, Phase 3).
 
 The workflow is a strict linear sequence. A stage may only run
 once every earlier stage has a persisted successful checkpoint.

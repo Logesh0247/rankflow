@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Quality Assurance Agent, Phase 6: automated repair requests (Prompt 09).
+"""Momentrix AI — Quality Assurance Agent, Phase 6: automated repair requests (Prompt 09).
 
 For each failure (and each issue that leaves the video in
 ``needs_review``), one structured correction request: what is
@@ -109,8 +109,13 @@ _RULES: list[tuple[str, str, str, str, str]] = [
      "re-render — the audio track carries no voice.",
      "VIDEO_PRODUCTION", "production"),
     ("narration audio is not generated", "config",
-     "Configure a TTS provider (TTS_PROVIDER / TTS_API_KEY) and "
+     "Enable TTS (TTS_ENABLED=true, TTS_PROVIDER=edge-tts) and "
      "re-render so the narration has a voice.",
+     "VIDEO_PRODUCTION", "production"),
+    ("narration audio generation failed", "production",
+     "Re-run production — the TTS endpoint failed during this render; "
+     "synthesis may succeed on retry, or check the endpoint / voice "
+     "configuration before re-rendering.",
      "VIDEO_PRODUCTION", "production"),
     ("no licensed background music", "config",
      "Configure a licensed music directory (PROD_MUSIC_DIR) or accept "

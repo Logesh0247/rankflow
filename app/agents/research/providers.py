@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Research Agent, Phase 2: source discovery providers (Prompt 03).
+"""Momentrix AI — Research Agent, Phase 2: source discovery providers (Prompt 03).
 
 Provider interface
 ------------------

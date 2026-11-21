@@ -1,4 +1,4 @@
-# RANKFLOW AI — Performance (Prompt 12, Phase 2)
+# Momentrix AI — Performance (Prompt 12, Phase 2)
 
 Measured on this machine (1.5 vCPU, 6 GB RAM, no GPU) with
 `scripts/benchmark.py`, which uses real files and wall-clock time.

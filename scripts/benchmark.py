@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Prompt 12 performance benchmark (before/after measurement).
+"""Momentrix AI — Prompt 12 performance benchmark (before/after measurement).
 
 Measures the two CPU-hot paths with real files and real wall-clock time:
 1. Video Intelligence frame extraction on a 30 s clip and a 120 s clip.

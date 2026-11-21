@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Intelligence Agent, Phase 2: frame extraction (Prompt 05).
+"""Momentrix AI — Video Intelligence Agent, Phase 2: frame extraction (Prompt 05).
 
 Reads a video with OpenCV at a configurable sampling rate and
 measures verifiable per-frame signals: brightness, sharpness

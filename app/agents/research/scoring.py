@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Research Agent, Phase 4: candidate evaluation (Prompt 03).
+"""Momentrix AI — Research Agent, Phase 4: candidate evaluation (Prompt 03).
 
 Scoring is deliberately separated into three named quantities so
 nobody confuses one for another (the brief warns about this):

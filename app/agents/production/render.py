@@ -57,17 +57,62 @@ def _escape_concat_path(path: str) -> str:
     return path.replace("\\", "\\\\").replace("'", "'\\''")
 
 
+def _mix_inputs(narration_path: str | None, music_path: str | None,
+                audio_chain: str) -> tuple[list[str], list[str]]:
+    """Extra FFmpeg inputs + the audio filter for the final mix.
+
+    Input 0 is always the concatenated segments (video + the clips'
+    own audio). Narration, when present, is the primary track: it
+    starts at t=0 and is padded with silence (``apad``) so it spans
+    the whole timeline — if the voiceover is shorter than the video
+    the tail is silence; if it is longer, ``amix duration=first``
+    cuts it at the timeline end. Music, when present, is looped at
+    low volume (0.15) under the narration and clip audio, the same
+    ducking the Prompt 08 mix used. Returns (input args, filter
+    args): with no extra tracks the caller uses a plain ``-af``
+    chain; with extras it needs ``-filter_complex``.
+    """
+    inputs: list[str] = []
+    labels: list[str] = ["[0:a]"]
+    filters: list[str] = []
+    stream = 1
+    if narration_path:
+        narration = Path(narration_path)
+        if not narration.is_file():
+            raise ValidationError(f"narration file missing before concat: {narration}")
+        inputs += ["-i", str(narration)]
+        filters.append(f"[{stream}:a]apad[a_narr]")
+        labels.append("[a_narr]")
+        stream += 1
+    if music_path:
+        music = Path(music_path)
+        if not music.is_file():
+            raise ValidationError(f"music file missing before concat: {music}")
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        filters.append(f"[{stream}:a]volume=0.15[a_mus]")
+        labels.append("[a_mus]")
+        stream += 1
+    if not filters:
+        return inputs, ["-af", audio_chain]
+    amix = (f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:"
+            f"dropout_transition=0,{audio_chain}[aout]")
+    return inputs, ["-filter_complex", ";".join(filters + [amix])]
+
+
 def concat_segments(segment_paths: list[str | Path], output_path: str | Path, *,
                     ffmpeg_path: str = "ffmpeg", ffprobe_path: str = "ffprobe",
                     total_duration_seconds: float,
+                    narration_path: str | None = None,
                     music_path: str | None = None,
                     timeout_seconds: float = 600.0) -> Path:
     """Join uniform segments into the final MP4 with the audio chain.
 
-    When a licensed music file is supplied it is looped under the
-    segment audio at low volume (0.15) and mixed with amix
+    When narration audio is supplied it is mixed in as the primary
+    track over the full timeline (see ``_mix_inputs``); when a
+    licensed music file is supplied it is looped under the segment
+    audio at low volume (0.15) and mixed with amix
     (duration=first, so the total duration is the segments', not
-    the music's). Without music the segment audio is used as-is.
+    the music's). Without either, the segment audio is used as-is.
 
     Video is stream-copied (Prompt 12): every segment is already a
     uniform 1080x1920 @ 30fps H.264 file, so re-encoding the video
@@ -90,32 +135,24 @@ def concat_segments(segment_paths: list[str | Path], output_path: str | Path, *,
         encoding="utf-8")
     audio_chain = final_audio_filter(total_duration_seconds)
     try:
-        _concat_stream_copy(list_path, output, music_path, audio_chain,
+        _concat_stream_copy(list_path, output, narration_path, music_path, audio_chain,
                             ffmpeg_path=ffmpeg_path, timeout_seconds=timeout_seconds)
     except ExternalServiceError:
-        _concat_reencode(list_path, output, music_path, audio_chain,
+        _concat_reencode(list_path, output, narration_path, music_path, audio_chain,
                          ffmpeg_path=ffmpeg_path, timeout_seconds=timeout_seconds)
     return output
 
 
-def _concat_stream_copy(list_path: Path, output: Path, music_path: str | None,
+def _concat_stream_copy(list_path: Path, output: Path, narration_path: str | None,
+                        music_path: str | None,
                         audio_chain: str, *, ffmpeg_path: str,
                         timeout_seconds: float) -> None:
     """Concat with video stream-copy; audio is re-encoded through the chain."""
+    extra_inputs, audio_args = _mix_inputs(narration_path, music_path, audio_chain)
     args = ["-f", "concat", "-safe", "0", "-i", str(list_path)]
-    if music_path:
-        music = Path(music_path)
-        if not music.is_file():
-            raise ValidationError(f"music file missing before concat: {music}")
-        args += ["-stream_loop", "-1", "-i", str(music)]
-        args += [
-            "-filter_complex",
-            f"[1:a]volume=0.15[a1];[0:a][a1]amix=inputs=2:duration=first:"
-            f"dropout_transition=0,{audio_chain}[aout]",
-            "-map", "0:v:0", "-map", "[aout]",
-        ]
-    else:
-        args += ["-af", audio_chain, "-map", "0:v:0", "-map", "0:a:0"]
+    args += extra_inputs
+    args += audio_args
+    args += ["-map", "0:v:0", "-map", "[aout]" if extra_inputs else "0:a:0"]
     args += [
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "128k",
@@ -125,24 +162,17 @@ def _concat_stream_copy(list_path: Path, output: Path, music_path: str | None,
     _run_ffmpeg(args, ffmpeg_path=ffmpeg_path, timeout_seconds=timeout_seconds)
 
 
-def _concat_reencode(list_path: Path, output: Path, music_path: str | None,
+def _concat_reencode(list_path: Path, output: Path, narration_path: str | None,
+                     music_path: str | None,
                      audio_chain: str, *, ffmpeg_path: str,
                      timeout_seconds: float) -> None:
     """Full re-encode fallback when stream-copy cannot join the segments."""
+    extra_inputs, audio_args = _mix_inputs(narration_path, music_path, audio_chain)
     args = ["-f", "concat", "-safe", "0", "-i", str(list_path)]
-    if music_path:
-        music = Path(music_path)
-        if not music.is_file():
-            raise ValidationError(f"music file missing before concat: {music}")
-        args += ["-stream_loop", "-1", "-i", str(music)]
-        args += [
-            "-filter_complex",
-            f"[1:a]volume=0.15[a1];[0:a][a1]amix=inputs=2:duration=first:"
-            f"dropout_transition=0,{audio_chain}[aout]",
-            "-map", "0:v:0", "-map", "[aout]",
-        ]
-    else:
-        args += ["-af", audio_chain]
+    args += extra_inputs
+    args += audio_args
+    if extra_inputs:
+        args += ["-map", "0:v:0", "-map", "[aout]"]
     args += [
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-r", "30",

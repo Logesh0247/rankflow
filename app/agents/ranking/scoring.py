@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Ranking Agent, Phases 1-3: scoring and duplicate detection (Prompt 06).
+"""Momentrix AI — Ranking Agent, Phases 1-3: scoring and duplicate detection (Prompt 06).
 
 Scores are EDITORIAL HEURISTICS derived only from the measured
 frame signals Video Intelligence persisted on each AnalyzedMoment

@@ -1,1 +1,1 @@
-"""RANKFLOW AI utils package."""
+"""Momentrix AI utils package."""

@@ -21,7 +21,7 @@ def health() -> HealthResponse:
     ffmpeg_ok = bool(tools.get("ffmpeg"))
     return HealthResponse(
         status="ok" if (db_ok and ffmpeg_ok) else "degraded",
-        app=settings.app_name,
+        app="Momentrix",
         database_ok=db_ok,
         ffmpeg_ok=ffmpeg_ok,
         storage_backend=settings.storage_backend,

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — TEST-ONLY test doubles (Prompt 02, Phase 6).
+"""Momentrix AI — TEST-ONLY test doubles (Prompt 02, Phase 6).
 
 These are minimal deterministic stand-ins used ONLY to test the
 orchestrator. They are NOT the seven real agents and must never be

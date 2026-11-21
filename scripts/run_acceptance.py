@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Final Acceptance Test (Prompt 12, Phase 7).
+"""Momentrix AI — Final Acceptance Test (Prompt 12, Phase 7).
 
 Input: TOP 5 CRAZIEST PARKOUR FAILS.
 Runs the full autonomous pipeline on a scratch database with five
@@ -298,7 +298,7 @@ def main() -> int:
 
 def _markdown(report: dict) -> str:
     lines = [
-        "# RANKFLOW AI — Final Acceptance Test (Prompt 12, Phase 7)",
+        "# Momentrix AI — Final Acceptance Test (Prompt 12, Phase 7)",
         "",
         f"Topic: **{report['topic']}**",
         f"Job: `{report['job_id']}` — status `{report['job_status']}`",

@@ -1,4 +1,4 @@
-# RANKFLOW AI — Rights Verification Agent (Prompt 04)
+# Momentrix AI — Rights Verification Agent (Prompt 04)
 
 The second real agent. It takes the candidates Research discovered
 for a job and decides, with evidence, whether each one may enter

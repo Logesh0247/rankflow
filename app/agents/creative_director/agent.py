@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent executor (Prompt 07, Phase 6).
+"""Momentrix AI — Creative Director Agent executor (Prompt 07, Phase 6).
 
 The callable the orchestrator registers for the
 ``creative_director`` agent. It takes an OrchestratorTask dict (as

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — orchestrator communication contracts (Prompt 02, Phase 4).
+"""Momentrix AI — orchestrator communication contracts (Prompt 02, Phase 4).
 
 Every task the orchestrator hands to an agent, and every response
 an agent returns, is one of these Pydantic models. The stage output

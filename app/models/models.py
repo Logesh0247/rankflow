@@ -1,4 +1,4 @@
-"""RANKFLOW AI — SQLAlchemy models (Phase 4, database design).
+"""Momentrix AI — SQLAlchemy models (Phase 4, database design).
 
 One model per persistent entity in the brief: jobs, candidate videos,
 sources, rights evidence, approved footage, analyzed moments, ranking

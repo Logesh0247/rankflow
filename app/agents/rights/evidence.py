@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Rights Verification Agent, Phases 1-3: evaluation (Prompt 04).
+"""Momentrix AI — Rights Verification Agent, Phases 1-3: evaluation (Prompt 04).
 
 One pure function, `evaluate()`, turns the evidence for a candidate
 into a verdict. It is deliberately pure (no database, no network)

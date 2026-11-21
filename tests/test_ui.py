@@ -50,7 +50,7 @@ def test_ui_serves_creator_studio_page(engine):
         r = client.get("/ui/")
         assert r.status_code == 200
         html = r.text
-        assert "RANKFLOW" in html
+        assert "MOMENTRIX" in html
         assert "AI-powered creative production" in html
         assert "Generate video" in html
         for label in ("Overview", "Projects", "Campaigns", "Content Library",
@@ -71,7 +71,11 @@ def test_settings_status_never_leaks_secrets(engine):
         r = client.get("/settings/status")
         assert r.status_code == 200
         body = r.json()
-        assert body["tts_configured"] is False
+        # Edge TTS is configured by default (free, no API key needed).
+        assert body["tts_configured"] is True
+        assert body["tts_provider"] == "edge-tts"
+        assert body["tts_voice"] == "en-US-GuyNeural"
+        assert body["tts_enabled"] is True
         assert body["youtube_configured"] is False
         assert body["music_library_configured"] is False
         assert body["video_output"]["width"] == 1080

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent, Phase 2: hook generation (Prompt 07).
+"""Momentrix AI — Creative Director Agent, Phase 2: hook generation (Prompt 07).
 
 Several hook candidates are generated internally from the
 user-supplied topic only — never from footage, which the agent

@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Rights Verification Agent, Phase 4: enforcement (Prompt 04).
+"""Momentrix AI — Rights Verification Agent, Phase 4: enforcement (Prompt 04).
 
 Server-side permission checks. This is the ONLY way downstream
 agents (Video Intelligence, Video Production, and anything later)

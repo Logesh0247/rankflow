@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Creative Director Agent (Prompt 07) — storytelling, hooks, narration, countdown structure, transitions, editing plans.
+"""Momentrix AI — Creative Director Agent (Prompt 07) — storytelling, hooks, narration, countdown structure, transitions, editing plans.
 
 BUILT (Prompt 07). Deterministic template generator — no LLM is
 configured in this environment, so no narration is "written" by a

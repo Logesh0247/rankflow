@@ -1,4 +1,4 @@
-"""RANKFLOW AI — shared data contracts (Phase 5).
+"""Momentrix AI — shared data contracts (Phase 5).
 
 Every agent exchanges these Pydantic models, never ad-hoc dicts.
 All models validate on construction; `model_validate` is the

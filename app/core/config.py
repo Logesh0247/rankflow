@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "RANKFLOW AI"
+    app_name: str = "Momentrix"
     app_env: Literal["development", "test", "production"] = "development"
     app_debug: bool = False
     app_host: str = "127.0.0.1"
@@ -59,7 +59,25 @@ class Settings(BaseSettings):
     # Muse AI is the reasoning provider named in the brief; no Muse
     # API key or endpoint is configured here.
     youtube_api_key: str = ""
-    tts_provider: str = ""
+    # Narration TTS (Edge TTS — added after Prompt 12, user-approved).
+    # edge-tts is a free, unofficial client of Microsoft's Edge
+    # neural-voice endpoint: no API key, no account, no per-character
+    # charge. TTS_PROVIDER defaults to "edge-tts" and TTS_ENABLED to
+    # true, so renders get a real narration voice by default.
+    # tts_api_key is kept for other providers and is NOT needed by
+    # edge-tts — never invent or require a key for it.
+    # Commercial-use caveat: edge-tts has no SLA and its use of
+    # Microsoft's endpoint may be rate-limited; check the
+    # commercial-use terms before publishing narrated videos.
+    # LIVE SYNTHESIS IS UNVERIFIED ON THIS MACHINE: the network
+    # proxy blocks speech.platform.bing.com (SSL WRONG_VERSION_NUMBER),
+    # so a failed synthesis here proves nothing about the deploy host.
+    # A synthesis failure never hard-fails a job — production falls
+    # back to a silent narration track and QA reports needs_review.
+    tts_provider: str = "edge-tts"
+    tts_voice: str = "en-US-GuyNeural"
+    tts_enabled: bool = True
+    tts_timeout_seconds: float = 120.0
     tts_api_key: str = ""
     speech_api_key: str = ""
 
@@ -121,17 +139,16 @@ class Settings(BaseSettings):
     cd_narration_wpm: float = 150.0
     cd_generator: str = "deterministic_template_v1"
 
-    # Video Production Agent (Prompt 08). Renders the approved EDL
-    # with FFmpeg to 1080x1920 @ 30fps H.264/AAC. No TTS provider,
-    # licensed music library or licensed SFX library is configured
-    # in this environment (TTS_PROVIDER / TTS_API_KEY are empty by
-    # default and no local TTS binary is installed), so narration
-    # audio is NOT generated — the render carries a silent audio
-    # track and the manifest says so. Music/SFX are only used when
-    # a directory of licensed audio files is configured below and
-    # the files probe as audio; otherwise the render has no music
-    # or SFX and the manifest says so. Nothing here invents an
-    # asset: a missing asset is recorded, never faked.
+    # Video Production Agent (Prompt 08; narration via Edge TTS added
+    # after Prompt 12). Renders the approved EDL with FFmpeg to
+    # 1080x1920 @ 30fps H.264/AAC. Narration audio is generated with
+    # edge-tts by default (TTS_PROVIDER=edge-tts, TTS_VOICE, no API
+    # key); a synthesis failure falls back to a silent narration
+    # track and is recorded in the manifest, never faked. Music/SFX
+    # are only used when a directory of licensed audio files is
+    # configured below and the files probe as audio; otherwise the
+    # render has no music or SFX and the manifest says so. Nothing
+    # here invents an asset: a missing asset is recorded, never faked.
     prod_font_file: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     prod_caption_font_file: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     prod_caption_font_size: int = 48
@@ -148,9 +165,10 @@ class Settings(BaseSettings):
     # semantic checks (what happens in a clip, caption text
     # position, unsuitable material) are recorded as NOT TESTED,
     # never passed on a guess. A render whose narration audio was
-    # never generated (no TTS) or whose audio is effectively
-    # silent is flagged as an issue and the verdict is
-    # needs_review, never pass.
+    # never generated or failed to synthesise, or whose audio is
+    # effectively silent, is flagged as an issue and the verdict is
+    # needs_review, never pass. A render with generated narration
+    # audio that is present and non-silent can reach pass.
     qa_sample_fps: float = 1.0
     qa_max_sampled_frames: int = 120
     qa_black_threshold: float = 8.0

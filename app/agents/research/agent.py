@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Research Agent executor (Prompt 03, Phase 6).
+"""Momentrix AI — Research Agent executor (Prompt 03, Phase 6).
 
 The callable the orchestrator registers for the ``research`` agent.
 It takes an OrchestratorTask dict (as the engine hands it over),

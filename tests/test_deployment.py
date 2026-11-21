@@ -58,7 +58,7 @@ def test_cost_service_prices_compute_and_api(engine):
     assert summary.tts_usd == 0.0
     assert summary.total_usd == pytest.approx(0.005, abs=1e-4)
     assert len(summary.events) == 3
-    assert any("no TTS provider" in n for n in summary.notes)
+    assert any("No TTS synthesis ran" in n for n in summary.notes)
 
 
 def test_cost_summary_totals(engine):

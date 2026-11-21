@@ -1,4 +1,4 @@
-"""RANKFLOW AI — Video Production demo (Prompt 08).
+"""Momentrix AI — Video Production demo (Prompt 08).
 
 Renders the approved Edit Decision List for one job to a real
 1080x1920 MP4 and prints the render report + manifest path.
