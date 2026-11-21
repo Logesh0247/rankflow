@@ -44,11 +44,16 @@ def _even(n: int) -> int:
 def compute_vertical_crop(source_width: int, source_height: int,
                           *, subject_x: float | None = None,
                           subject_y: float | None = None,
-                          safe_margin_fraction: float = 0.10) -> CropWindow:
-    """Crop window that turns the source aspect into 9:16.
+                          safe_margin_fraction: float = 0.10,
+                          target_aspect: float = TARGET_ASPECT) -> CropWindow:
+    """Crop window that turns the source aspect into `target_aspect`.
 
-    Wide source (aspect > 9:16): crop the width, keep full height.
-    Tall source (aspect < 9:16): crop the height, keep full width.
+    Default target is 9:16 (1080x1920). The Rankter layout crops
+    to the video-area aspect instead (1080x1190) — the same
+    subject-aware rule, a different target rectangle.
+
+    Wide source (aspect > target): crop the width, keep full height.
+    Tall source (aspect < target): crop the height, keep full width.
     The subject position, when given, centres the window on it,
     clamped so the window stays inside the frame. (The 10% safe
     margins in the brief apply to captions and graphics, which
@@ -58,9 +63,9 @@ def compute_vertical_crop(source_width: int, source_height: int,
     if source_width <= 0 or source_height <= 0:
         raise ValueError("source dimensions must be positive")
     aspect = source_width / source_height
-    if aspect > TARGET_ASPECT:
+    if aspect > target_aspect:
         crop_h = source_height
-        crop_w = _even(int(source_height * TARGET_ASPECT))
+        crop_w = _even(int(source_height * target_aspect))
         if subject_x is not None:
             centre = max(0.0, min(1.0, subject_x)) * source_width
             x = int(centre - crop_w / 2)
@@ -71,9 +76,9 @@ def compute_vertical_crop(source_width: int, source_height: int,
         x = _even(max(0, min(hi, x)))
         return CropWindow(width=crop_w, height=crop_h, x=x, y=0,
                           subject_aware=subject_x is not None, subject_x=subject_x)
-    if aspect < TARGET_ASPECT:
+    if aspect < target_aspect:
         crop_w = source_width
-        crop_h = _even(int(source_width / TARGET_ASPECT))
+        crop_h = _even(int(source_width / target_aspect))
         if subject_y is not None:
             centre = max(0.0, min(1.0, subject_y)) * source_height
             y = int(centre - crop_h / 2)
@@ -83,7 +88,7 @@ def compute_vertical_crop(source_width: int, source_height: int,
         y = _even(max(0, min(hi, y)))
         return CropWindow(width=crop_w, height=crop_h, x=0, y=y,
                           subject_aware=subject_y is not None, subject_x=subject_x)
-    # Already 9:16.
+    # Already at the target aspect.
     return CropWindow(width=_even(source_width), height=_even(source_height),
                       x=0, y=0, subject_aware=False)
 
@@ -92,17 +97,22 @@ def reframe_filter(source_width: int, source_height: int,
                    *, subject_x: float | None = None,
                    subject_y: float | None = None,
                    safe_margin_fraction: float = 0.10,
-                   fps: int = 30) -> tuple[str, CropWindow]:
+                   fps: int = 30,
+                   target_width: int = TARGET_WIDTH,
+                   target_height: int = TARGET_HEIGHT) -> tuple[str, CropWindow]:
     """FFmpeg filter chain for one clip: crop -> scale -> fps.
 
-    Returns (filter_string, crop_window). The caller appends
-    format / overlay filters after this.
+    Scales to `target_width`x`target_height` (default 1080x1920;
+    the Rankter layout reframes clips to 1080x1190, the video
+    area of the frame). Returns (filter_string, crop_window).
+    The caller appends format / overlay filters after this.
     """
     window = compute_vertical_crop(
         source_width, source_height, subject_x=subject_x, subject_y=subject_y,
-        safe_margin_fraction=safe_margin_fraction)
+        safe_margin_fraction=safe_margin_fraction,
+        target_aspect=target_width / target_height)
     chain = (f"crop={window.width}:{window.height}:{window.x}:{window.y},"
-             f"scale={TARGET_WIDTH}:{TARGET_HEIGHT},fps={fps}")
+             f"scale={target_width}:{target_height},fps={fps}")
     return chain, window
 
 

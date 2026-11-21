@@ -252,6 +252,66 @@ def test_extract_clip_rejects_bad_range_and_missing_file(tmp_path):
         extract_clip(tmp_path / "nope.mp4", 0.0, 2.0, tmp_path / "clip.mp4")
 
 
+def test_rankter_clip_frame_has_dark_top_zone_and_video_below(tmp_path):
+    """A Rankter clip segment: dark #0f1016 top zone carrying the
+    title + ranked list, footage in the lower 62% of the frame."""
+    footage = _write_footage(tmp_path / "source.mp4", 5, (40, 160, 40),
+                             duration=10.0)
+    items = [(5, "A sharp, fast segment. Score 80/100"),
+             (4, "A steady segment. Score 75/100"),
+             (3, "A dark segment. Score 70/100"),
+             (2, "A bright segment. Score 65/100"),
+             (1, "A sharp segment. Score 60/100")]
+    gfx, _ = clip_graphics_filters(
+        rank=5, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
+        source_label="Parkour Fails 5 by Creator 5",
+        attribution_text=None, attribution_required=False,
+        duration_seconds=6.0, transition_seconds=0.5,
+        transition_in="hard cut", work_dir=tmp_path,
+        font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    clip = extract_clip(footage, 0.0, 6.0, tmp_path / "seg.mp4",
+                        extra_video_filters=gfx,
+                        target_width=1080, target_height=1190)
+    assert clip.width == 1080 and clip.height == 1920
+    cap = cv2.VideoCapture(str(tmp_path / "seg.mp4"))
+    ok, frame = cap.read()
+    cap.release()
+    assert ok, "could not read the rendered segment"
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    top = gray[:700, :]       # title + list zone (above the video area)
+    video = gray[730:, :]     # the clip itself
+    assert float(np.mean(top)) < 60  # dark Rankter background #0f1016
+    assert float(np.std(top)) > 2.0  # title + list text is visible
+    assert float(np.mean(video)) > 60  # green footage, clearly brighter
+    # The list area specifically has text pixels (not a flat dark zone).
+    list_area = gray[460:710, :]
+    assert float(np.std(list_area)) > 2.0
+
+
+def test_service_render_has_rankter_layout(engine, tmp_path):
+    """Full service render in the Rankter style: 1080x1920, EDL
+    duration, manifest records the style, and a sampled frame
+    inside clip #5 shows the dark top zone with the list above
+    the footage."""
+    job = _new_job(engine)
+    seeded = _seed_ranked_five(engine, job.id)
+    footage = _footage_map(engine, job.id, seeded, tmp_path)
+    report = ProductionService(engine, _settings()).run(job.id, footage_paths=footage)
+    assert report.validation["valid"] is True
+    assert report.duration_seconds == pytest.approx(39.0, abs=0.6)
+    assert report.metrics["graphics_style"] == "rankter"
+    assert any("Rankter-style" in limitation for limitation in report.limitations)
+    cap = cv2.VideoCapture(report.file_path)
+    cap.set(cv2.CAP_PROP_POS_MSEC, 5000)  # inside clip #5 (3.5s–9.5s)
+    ok, frame = cap.read()
+    cap.release()
+    assert ok, "could not read a frame from the rendered video"
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    assert float(np.mean(gray[:700, :])) < 60  # dark top zone
+    assert float(np.std(gray[460:710, :])) > 2.0  # list text visible
+    assert float(np.mean(gray[730:, :])) > 40  # footage below
+
+
 def test_render_silent_segment_is_a_valid_card(tmp_path):
     out = tmp_path / "card.mp4"
     rendered = render_silent_segment(out, 3.0)
@@ -303,24 +363,36 @@ def test_drawtext_filter_uses_textfile_not_inline_text(tmp_path):
 
 
 def test_clip_graphics_filters_have_rank_source_and_fade(tmp_path):
+    items = [(5, "A sharp, fast segment. Score 80/100"),
+             (4, "A steady segment. Score 75/100"),
+             (3, "A dark segment. Score 70/100"),
+             (2, "A bright segment. Score 65/100"),
+             (1, "A sharp segment. Score 60/100")]
     filters, files = clip_graphics_filters(
-        rank=5, source_label="Parkour Fails 5 by Creator 5",
+        rank=5, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
+        source_label="Parkour Fails 5 by Creator 5",
         attribution_text="Parkour Fails 5 by Creator 5 (CC BY 4.0)",
         attribution_required=True, duration_seconds=6.0,
         transition_seconds=0.5, transition_in="cross-dissolve (0.5s)",
         work_dir=tmp_path,
         font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         score_note="Score 80.0/100")
+    # Rankter frame first: the clip is padded into the lower 62%.
+    assert "pad=1080:1920:0:730:color=0x0f1016" in filters
     assert "drawtext=" in filters
+    assert "fontcolor=0xffd400" in filters  # PARKOUR/FAILS + active #5 line
+    assert "borderw=8" in filters  # stroked title
     assert "fade=t=in" in filters and "fade=t=out" in filters
     assert len(files) >= 4
     hard, _ = clip_graphics_filters(
-        rank=1, source_label="Clip", attribution_text=None,
+        rank=1, topic="TOP 5 CRAZIEST PARKOUR FAILS", list_items=items,
+        source_label="Clip", attribution_text=None,
         attribution_required=False, duration_seconds=6.0,
         transition_seconds=0.5, transition_in="hard cut",
         work_dir=tmp_path,
         font_file="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
     assert "fade=t=in" not in hard
+    assert "pad=1080:1920:0:730" in hard
 
 
 def test_card_graphics_filters_centre_lines(tmp_path):

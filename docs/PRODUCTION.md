@@ -61,12 +61,35 @@ graphics, audio design, rendering, and render validation.
    `emphasis_words`). Captions are re-timed to each segment's
    timeline start; a cue that falls outside its segment fails
    validation.
-6. **Graphics** — drawtext overlays, all from the EDL/visual
-   direction, no invented text: countdown number (`#5` … `#1`),
-   ranking label (`MOMENT #5`), intro title card (topic +
-   "TOP 5 COUNTDOWN"), outro card with the full attribution
-   credits, and per-clip source attribution when the licence
-   requires it. Fade in/out are 0.5s; hard-cut clips get no fade.
+6. **Graphics** — Rankter-style drawtext overlays, all from the
+   EDL/visual direction and the job topic, no invented text. The
+   1080×1920 frame is split: a dark `#0f1016` top zone (title +
+   ranked list) above the clip video in the lower 62% of the
+   frame (1080×1190 at y=730, reframed with the same
+   motion-centroid subject-aware crop, then padded in). The title
+   is the job topic, uppercased and word-wrapped (96px, falling
+   back to 72/56px when it needs more than two lines), big bold
+   stroked white text with an 8px black stroke and the topic's
+   content words highlighted yellow `#ffd400` (e.g. `CAT` in
+   "top 5 cat funny moments"). The ranked list shows all five
+   moments (`#5` … `#1`, 40px, starting ~24% from the top, 10px
+   spacing); it stays visible while its clip plays and the item
+   currently playing is highlighted yellow. List labels reuse the
+   Creative Director's per-moment narration text (signal-grounded,
+   never a description of what happens in the clip) with the
+   leading "Number N." stripped and the narration's own score
+   appended ("Score 80/100"), truncated to fit. Per-clip source
+   attribution is shown in the lower third when the licence
+   requires it, the intro card shows the title + full list, and
+   the outro card carries the full attribution credits. Text is
+   measured with Pillow against the same DejaVu Sans Bold font
+   FFmpeg draws with, so titles wrap and centre exactly. Fade
+   in/out are 0.5s; hard-cut clips get no fade. Honest limit: the
+   style matches Rankter's layout, but the clips are
+   auto-selected by Momentrix from licensed sources — unlike
+   Rankter, the user does not hand-pick or order them, and the
+   list labels are the system's signal-grounded wording, not
+   hand-written clip descriptions.
 7. **Audio design** — there is **no licensed music or SFX library
    configured** (`PROD_MUSIC_DIR` / `PROD_SFX_DIR` empty), so the
    render has no background music and no mixed SFX; the manifest

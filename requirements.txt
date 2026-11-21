@@ -17,6 +17,7 @@ kombu==5.7.0
 numpy==2.5.5
 opencv-python-headless==5.1.0.95
 packaging==26.3
+Pillow==13.0.0
 pluggy==1.7.0
 psycopg==3.3.9
 psycopg-binary==3.3.9

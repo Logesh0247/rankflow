@@ -71,13 +71,20 @@ def extract_clip(source_path: str | Path, start_seconds: float, end_seconds: flo
                  ffprobe_path: str = "ffprobe", fps: int = 30,
                  extra_video_filters: str = "",
                  subject_x: float | None = None,
+                 target_width: int = TARGET_WIDTH,
+                 target_height: int = TARGET_HEIGHT,
                  timeout_seconds: float = 300.0) -> ExtractedClip:
-    """Extract [start, end) from a source file into a 1080x1920 segment.
+    """Extract [start, end) from a source file into a segment.
 
     `extra_video_filters` is appended after the reframe chain (and
     before format conversion) — Production uses it for graphics,
     captions and fades. The segment always has an audio stream:
     the source audio when present, otherwise generated silence.
+
+    The output frame is `target_width`x`target_height` (default
+    1080x1920; the Rankter layout reframes clips to 1080x1190 and
+    pads them into the full frame with the frame filter, so the
+    output is still 1080x1920).
     """
     source = Path(source_path)
     output = Path(output_path)
@@ -93,7 +100,8 @@ def extract_clip(source_path: str | Path, start_seconds: float, end_seconds: flo
             f"clip end {end_seconds}s runs past the source duration "
             f"{probe.duration_seconds:.2f}s for {source}")
     chain, window = reframe_filter(
-        probe.width, probe.height, subject_x=subject_x, fps=fps)
+        probe.width, probe.height, subject_x=subject_x, fps=fps,
+        target_width=target_width, target_height=target_height)
     video_filters = chain
     if extra_video_filters:
         video_filters += f",{extra_video_filters}"
@@ -142,12 +150,16 @@ def extract_clip(source_path: str | Path, start_seconds: float, end_seconds: flo
 def render_silent_segment(output_path: str | Path, duration_seconds: float,
                           *, ffmpeg_path: str = "ffmpeg",
                           extra_video_filters: str = "",
+                          background_color: str = "0x0d0d1a",
                           timeout_seconds: float = 300.0) -> ExtractedClip:
     """Render a solid-colour title/outro card segment (no source file).
 
-    Used for the intro and outro cards. The card is a dark frame
-    with the overlay filters supplied by the caller (drawtext);
-    audio is generated silence so the segment concatenates cleanly.
+    Used for the intro and outro cards and the black transition
+    gaps. The card is a solid frame (`background_color`, default
+    near-black) with the overlay filters supplied by the caller
+    (drawtext); audio is generated silence so the segment
+    concatenates cleanly. Intro/outro cards use the Rankter dark
+    background #0f1016; transition gaps keep the default black.
     """
     output = Path(output_path)
     if duration_seconds <= 0:
@@ -158,7 +170,7 @@ def render_silent_segment(output_path: str | Path, duration_seconds: float,
     output.parent.mkdir(parents=True, exist_ok=True)
     args = [
         "-f", "lavfi", "-i",
-        f"color=c=0x0d0d1a:s={TARGET_WIDTH}x{TARGET_HEIGHT}:r=30:d={duration_seconds:.3f}",
+        f"color=c={background_color}:s={TARGET_WIDTH}x{TARGET_HEIGHT}:r=30:d={duration_seconds:.3f}",
         "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
         "-vf", video_filters,
         "-map", "0:v:0", "-map", "1:a:0",

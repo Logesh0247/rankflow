@@ -67,7 +67,9 @@ from app.agents.production.extract import (
     ExtractedClip, extract_clip, render_silent_segment,
 )
 from app.agents.production.graphics import (
-    card_graphics_filters, clip_graphics_filters,
+    RANKTER_BG, RANKTER_VIDEO_AREA_HEIGHT, TARGET_WIDTH,
+    card_graphics_filters, clip_graphics_filters, fade_filters,
+    rankter_list_filters, rankter_list_label, rankter_title_filters,
 )
 from app.agents.production.narration import (
     NarrationAudio, NarrationProvider, detect_narration_provider,
@@ -327,6 +329,16 @@ class ProductionService:
                 "total_duration_seconds": total_duration,
                 "render_id": render_id,
                 "duration_ms": int((time.monotonic() - started) * 1000),
+                "graphics_style": "rankter",
+                "graphics_layout": {
+                    "title": "Rankter-style big bold stroked title, "
+                             "topic keywords highlighted #ffd400",
+                    "ranked_list": "persistent 5-item list above the clip, "
+                                   "active rank highlighted #ffd400",
+                    "video_area": "clip in the lower 62% of the frame "
+                                  "(1080x1190 at y=730)",
+                    "background": "#0f1016",
+                },
             })
         manifest = report.model_dump(mode="json")
         (work_dir / "manifest.json").write_text(
@@ -424,18 +436,41 @@ class ProductionService:
         s = self.settings
         warnings: list[str] = []
         content: list[dict] = []
-        # Intro card (scene 1 captions: the hook).
+        # Rankter-style ranked list, built once and drawn on the
+        # intro card and on every moment segment. Labels reuse the
+        # Creative Director's own narration text (signal-grounded,
+        # never a description of what happens in a clip) plus its
+        # score — nothing is invented here.
+        list_items: list[tuple[int, str]] = []
+        for i, clip in enumerate(clips):
+            graphic = per_moment[i] if i < len(per_moment) else {}
+            countdown = graphic.get("countdown_graphics") or {}
+            narration_text = ((clip.get("narration_cue") or {}).get("text")
+                              or clip.get("caption") or "")
+            list_items.append((
+                int(clip["rank"]),
+                rankter_list_label(narration_text, int(clip["rank"]),
+                                   countdown.get("score_note"))))
+        # Intro card (scene 1 captions: the hook): Rankter-style
+        # title + the full ranked list (nothing highlighted yet —
+        # no clip is playing).
         intro_cues = [c for c in caption_plan if c.get("scene_number") == 1]
         intro_ass = self._ass_for_segment(work_dir, "intro", intro_cues, 0.0)
-        intro_filters, _ = card_graphics_filters(
-            lines=[job.topic.strip(), "TOP 5 COUNTDOWN"], work_dir=work_dir,
-            font_file=s.prod_font_file,
-            fade_in=True, fade_out=_is_dissolve(clips[0]),
-            duration_seconds=intro_s, transition_seconds=transition_s)
+        title_filters, _ = rankter_title_filters(
+            job.topic.strip(), work_dir=work_dir, font_file=s.prod_font_file,
+            tag="intro-title")
+        intro_list_filters, _ = rankter_list_filters(
+            list_items, None, work_dir=work_dir, font_file=s.prod_font_file,
+            tag="intro-list")
+        intro_fade = fade_filters(intro_s, transition_s,
+                                  fade_in=True, fade_out=_is_dissolve(clips[0]))
+        intro_filters = ",".join(
+            part for part in (title_filters, intro_list_filters, intro_fade) if part)
         intro_filters = self._with_ass(intro_filters, intro_ass)
         intro = render_silent_segment(
             work_dir / "seg-00-intro.mp4", intro_s,
             ffmpeg_path=s.ffmpeg_path, extra_video_filters=intro_filters,
+            background_color=RANKTER_BG,
             timeout_seconds=float(s.prod_render_timeout_seconds))
         content.append({"path": str(intro.output_path), "ass_file": str(intro_ass) if intro_ass else None,
                         "report": {"kind": "intro", "rank": None, "moment_id": None,
@@ -457,7 +492,9 @@ class ProductionService:
             clip_cues = [c for c in caption_plan if c.get("moment_id") == clip["moment_id"]]
             ass_path = self._ass_for_segment(work_dir, f"clip-{i + 1}", clip_cues, cue_start)
             gfx, _ = clip_graphics_filters(
-                rank=int(clip["rank"]), source_label=source_label,
+                rank=int(clip["rank"]), topic=job.topic.strip(),
+                list_items=list_items,
+                source_label=source_label,
                 attribution_text=graphic.get("attribution_display"),
                 attribution_required=bool(graphic.get("attribution_required")),
                 duration_seconds=float(clip["duration_seconds"]),
@@ -471,6 +508,8 @@ class ProductionService:
                 work_dir / f"seg-{i + 1:02d}-clip.mp4",
                 ffmpeg_path=s.ffmpeg_path, ffprobe_path=s.ffprobe_path,
                 extra_video_filters=gfx, subject_x=centroid,
+                target_width=TARGET_WIDTH,
+                target_height=RANKTER_VIDEO_AREA_HEIGHT,
                 timeout_seconds=float(s.prod_render_timeout_seconds))
             if centroid is None:
                 warnings.append(
@@ -515,6 +554,7 @@ class ProductionService:
         outro = render_silent_segment(
             work_dir / f"seg-{len(clips) + 1:02d}-outro.mp4", outro_s,
             ffmpeg_path=s.ffmpeg_path, extra_video_filters=outro_filters,
+            background_color=RANKTER_BG,
             timeout_seconds=float(s.prod_render_timeout_seconds))
         content.append({"path": str(outro.output_path), "ass_file": str(outro_ass) if outro_ass else None,
                         "report": {"kind": "outro", "rank": None, "moment_id": None,
@@ -639,6 +679,16 @@ class ProductionService:
             "cross-dissolve clips additionally fading into/out of "
             "the gap — not true xfades, which would overlap the "
             "segments and shorten the total below the EDL total.",
+            "Graphics use the Rankter-style layout (big stroked "
+            "title with the topic's keywords highlighted yellow, "
+            "persistent ranked list with the active rank "
+            "highlighted, clip video in the lower 62% of the frame "
+            "on a dark #0f1016 background). The clips are "
+            "auto-selected by Momentrix from licensed sources — "
+            "unlike Rankter, the user does not hand-pick or order "
+            "them — and the list labels reuse the Creative "
+            "Director's signal-grounded narration text, not "
+            "descriptions of what happens in a clip.",
             "Subject-aware reframing tracks the motion centroid measured "
             "by frame differencing; a static shot falls back to centre crop.",
         ]
