@@ -40,7 +40,7 @@ CREATE TABLE agent_execution_logs (
 	id VARCHAR(36) NOT NULL, 
 	job_id VARCHAR(36) NOT NULL, 
 	agent_name VARCHAR(64) NOT NULL, 
-	task_id VARCHAR(36), 
+	task_id VARCHAR(64), 
 	status VARCHAR(32) NOT NULL, 
 	detail TEXT, 
 	duration_ms INTEGER, 

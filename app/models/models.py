@@ -337,7 +337,16 @@ class AgentExecutionLog(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    task_id: Mapped[str | None] = mapped_column(String(36))
+    # task_id is "{job_id}:{stage}:{attempt}" (engine.py) — a 36-char
+    # UUID + ":" + the longest stage name (RIGHTS_VERIFICATION, 19)
+    # + ":" + one attempt digit = 58 chars at most. It MUST stay
+    # wide enough for that: String(36) was the 2026-11-21 Neon
+    # incident — every job failed at RESEARCH with
+    # StringDataRightTruncation because "…:RESEARCH:1" is 47 chars.
+    # SQLite never enforced the length, PostgreSQL does. Widened by
+    # migration 012 (ALTER COLUMN on existing databases); keep the
+    # model, schema.sql and migration 012 in agreement.
+    task_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="started")
     detail: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(Integer)

@@ -262,6 +262,12 @@ class WorkflowEngine:
         max_attempts = max(1, self.settings.orchestrator_max_attempts)
 
         for attempt in range(1, max_attempts + 1):
+            # task_id is stored in agent_execution_logs.task_id
+            # (VARCHAR(64)): 36 (UUID) + 1 + longest stage name
+            # (RIGHTS_VERIFICATION, 19) + 1 + 1 attempt digit = 58
+            # max. Do not lengthen this format without widening
+            # that column (see migration 012 — Postgres enforces
+            # VARCHAR lengths, SQLite does not).
             task_id = f"{job_id}:{stage.value}:{attempt}"
             if self.jobs.has_succeeded_task(task_id):
                 # Duplicate task: already succeeded, do not run again.

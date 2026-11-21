@@ -40,7 +40,9 @@ def main() -> None:
             conn.execute(text(
                 "CREATE TABLE agent_execution_logs_new ("
                 "id VARCHAR(36) NOT NULL, job_id VARCHAR(36) NOT NULL, "
-                "agent_name VARCHAR(64) NOT NULL, task_id VARCHAR(36), "
+                # task_id is VARCHAR(64) since migration 012: the
+                # "{job_id}:{stage}:{attempt}" value is up to 58 chars.
+                "agent_name VARCHAR(64) NOT NULL, task_id VARCHAR(64), "
                 "status VARCHAR(32) NOT NULL, detail TEXT, duration_ms INTEGER, "
                 "created_at DATETIME NOT NULL, PRIMARY KEY (id), "
                 f"CONSTRAINT ck_agent_log_status CHECK (status IN {NEW_STATUSES}), "
