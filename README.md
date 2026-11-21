@@ -188,10 +188,13 @@ run the migration first:
 
 Analyses every Rights-approved candidate of the job that has a
 local footage file (from `ApprovedFootage.storage_path` or
-`--footage`). See `docs/VIDEO_INTELLIGENCE.md`. The analyser is a
-deterministic heuristic over frame signals only — no
-vision-language model is configured, so moments are described by
-their measured signals, never by an inferred event.
+`--footage`) — or, when no local file exists, downloads the
+approved source from the Internet Archive automatically
+(Rights re-checked server-side, per-file cap 500 MB, per-job
+cap 1 GB, ffprobe-verified; see `docs/VIDEO_INTELLIGENCE.md`).
+The analyser is a deterministic heuristic over frame signals
+only — no vision-language model is configured, so moments are
+described by their measured signals, never by an inferred event.
 
 ## Rights demo
 

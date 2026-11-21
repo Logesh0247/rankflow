@@ -54,6 +54,11 @@ def _settings(**overrides) -> Settings:
             "orchestrator_timeout_seconds": 300.0,
             "rights_fetch_ia_metadata": False,
             "research_provider": "test",
+            # Downloads stay off here: these jobs use seeded local
+            # footage, and no test should touch the live Archive.
+            # Download behaviour is covered by
+            # tests/test_footage_download.py.
+            "footage_download_enabled": False,
             "tts_enabled": False}
     base.update(overrides)
     return Settings(**base)

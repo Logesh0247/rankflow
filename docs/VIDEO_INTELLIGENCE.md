@@ -51,14 +51,53 @@ moment's `labels` records which one ran.
 
 ## Footage supply
 
-The agent analyses local files only. A file is resolved from
-`ApprovedFootage.storage_path` (the channel a future download
-step will fill in) or from the `footage_paths` task input
-(`{candidate_id: path}`). Downloading source videos is **not**
-configured in Prompt 05. An approved candidate with no local file
-is skipped with that reason recorded; if no candidate yields a
-usable moment, the service raises and the orchestrator fails the
-job honestly — an empty output is never returned.
+The agent analyses local files. A file is resolved, in order,
+from the `footage_paths` task input (`{candidate_id: path}`),
+from `ApprovedFootage.storage_path`, or — when neither exists —
+by downloading the approved source from the Internet Archive
+(`download.py`, added after Prompt 12 to fix a live failure
+where a job failed at VIDEO_ANALYSIS with no local file).
+
+Download rules (all enforced, all honest):
+- **Rights gate first, again.** The downloader re-checks
+  `require_approved` server-side before every download.
+  Rejected, needs-review, expired or never-checked footage is
+  never downloaded.
+- **Archive only.** The item identifier is the candidate's
+  `external_video_id`; metadata comes from
+  `{FOOTAGE_ARCHIVE_BASE_URL}/metadata/{id}` and the file from
+  `{base}/download/{id}/{file}`. File selection prefers mp4,
+  then webm, then mov, then the other playable containers;
+  within one extension, known sizes first, largest first.
+- **Caps.** Per-file cap `FOOTAGE_MAX_MB` (default 500) and
+  per-job total cap `FOOTAGE_TOTAL_MAX_MB` (default 1024),
+  enforced while streaming — an oversized file is aborted
+  mid-download, never left half-written. A file over a cap is
+  skipped with a clear reason.
+- **Verify before use.** The downloaded file must probe with
+  ffprobe (duration > 0); a file that fails verification is
+  deleted, never analysed. `ApprovedFootage.storage_path` and
+  duration are recorded only after a successful probe.
+- **Fail soft per file.** One candidate failing to download
+  (metadata 404, network error, corrupt file, over a cap) only
+  skips that candidate; the next approved candidate still gets
+  its chance. The stage fails only when no approved candidate
+  produced a usable moment, naming the per-candidate reasons.
+- **Resume works.** A downloaded file is recorded on the
+  `ApprovedFootage` row, so a job that failed at VIDEO_ANALYSIS
+  resumes from that stage (dashboard "Resume job" or
+  `resume_job` / `rerun_from_stage=VIDEO_ANALYSIS`) and reuses
+  the file instead of starting over. An already-present local
+  file is never re-downloaded.
+- **YouTube downloads are NOT in scope.** A non-Archive
+  platform is skipped with a reason saying so. YouTube search
+  itself is still unconfigured.
+
+Set `FOOTAGE_DOWNLOAD_ENABLED=false` to restore the old
+behaviour (approved candidates without a local file are
+skipped). A large download can exceed the orchestrator's
+per-attempt timeout (`ORCHESTRATOR_TIMEOUT_SECONDS`, default
+60 s) — raise it when the per-file cap is large.
 
 ## API
 
@@ -92,7 +131,11 @@ manifest `manifest.json`):
 `VI_SCENE_THRESHOLD` (0.55), `VI_MOTION_THRESHOLD` (6.0),
 `VI_MIN_MOMENT_SECONDS` (2.0), `VI_MAX_MOMENT_SECONDS` (12.0),
 `VI_MAX_MOMENTS_PER_VIDEO` (5), `VI_LEAD_IN_SECONDS` (0.5),
-`VI_AFTERMATH_SECONDS` (0.5).
+`VI_AFTERMATH_SECONDS` (0.5). Footage download:
+`FOOTAGE_DOWNLOAD_ENABLED` (true), `FOOTAGE_ARCHIVE_BASE_URL`
+(`https://archive.org`), `FOOTAGE_MAX_MB` (500),
+`FOOTAGE_TOTAL_MAX_MB` (1024), `FOOTAGE_DOWNLOAD_TIMEOUT_SECONDS`
+(300), `FOOTAGE_METADATA_TIMEOUT_SECONDS` (15).
 
 ## Known limitations
 
@@ -102,4 +145,8 @@ manifest `manifest.json`):
   default), then verified by re-reading the file.
 - Long videos are sampled adaptively (≤ 600 frames), so a
   hours-long source is analysed coarsely, not frame-by-frame.
-- Only local files are analysed; no downloader, no TTS/speech use.
+- Analysis is local-file only (downloaded Archive footage is a
+  local file by the time it is analysed); no TTS/speech use.
+- Archive file availability varies per item: some items publish
+  no playable video file, and very large files are skipped by the
+  size caps. YouTube downloads are not in scope.

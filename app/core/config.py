@@ -116,6 +116,29 @@ class Settings(BaseSettings):
     vi_aftermath_seconds: float = 0.5
     vi_analyser: str = "heuristic_frame_signals_v1"
 
+    # Footage download (added after Prompt 12 to fix the live
+    # failure where an approved candidate had no local file).
+    # Video Intelligence downloads approved Internet Archive
+    # footage automatically: it fetches the item's metadata,
+    # picks a playable video file (mp4 first), streams it to
+    # local storage and verifies it with ffprobe before any
+    # analysis. Downloads happen ONLY for footage the Rights
+    # gate approved — the gate is re-checked server-side before
+    # every download. Per-file and per-job caps protect the
+    # Render free plan (small disk, ephemeral filesystem); a
+    # file over the cap is skipped with a clear reason, and a
+    # failed download never blocks the other candidates. Set
+    # FOOTAGE_DOWNLOAD_ENABLED=false to restore the old
+    # behaviour (approved candidates without a local file are
+    # skipped). YouTube downloads are NOT in scope — YouTube
+    # search itself is still unconfigured.
+    footage_download_enabled: bool = True
+    footage_archive_base_url: str = "https://archive.org"
+    footage_max_mb: float = 500.0
+    footage_total_max_mb: float = 1024.0
+    footage_download_timeout_seconds: float = 300.0
+    footage_metadata_timeout_seconds: float = 15.0
+
     # Ranking Agent (Prompt 06). Scores are editorial heuristics
     # from the measured frame signals (scorer
     # "heuristic_editorial_v1") — NOT viral-performance

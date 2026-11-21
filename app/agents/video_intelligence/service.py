@@ -2,19 +2,23 @@
 
 Flow for one job:
   approved candidates (from the Rights gate — server-side, fail
-  closed) -> for each one, resolve its local footage file ->
-  ffprobe -> sampled frames -> heuristic analysis -> timestamp
-  verification -> persist AnalyzedMoment rows -> update the
-  ApprovedFootage row and the candidate status -> return a
-  VideoAnalysisReport; the executor hands only the moment ids to
-  the orchestrator as a validated VideoAnalysisOutput.
+  closed) -> for each one, resolve its local footage file
+  (supplied path, existing ApprovedFootage.storage_path, or a
+  download of the approved source from the Internet Archive —
+  see download.py) -> ffprobe -> sampled frames -> heuristic
+  analysis -> timestamp verification -> persist AnalyzedMoment
+  rows -> update the ApprovedFootage row and the candidate
+  status -> return a VideoAnalysisReport; the executor hands
+  only the moment ids to the orchestrator as a validated
+  VideoAnalysisOutput.
 
 Failure handling (never silent, never fabricated):
 * no approved candidates -> ExternalServiceError;
-* an approved candidate with no local footage file -> skipped
-  with the reason recorded (a download step is not configured in
-  this prompt; the file must be supplied via ApprovedFootage
-  storage_path or the `footage_paths` argument);
+* an approved candidate with no local footage file and no
+  downloadable source -> skipped with the reason recorded
+  (download disabled, source not on the Archive, file over the
+  size cap, download failed, or the downloaded file failed
+  ffprobe verification);
 * a corrupt / unreadable / no-video-stream file -> skipped with
   the probe error recorded;
 * zero usable moments across all candidates -> ExternalServiceError
@@ -22,8 +26,16 @@ Failure handling (never silent, never fabricated):
   An empty VideoAnalysisOutput is never returned (its schema
   requires >= 1 moment id).
 
+A download is attempted only for footage the Rights gate
+approved (re-checked server-side per candidate), and only one
+candidate's failure never blocks the others: each candidate is
+skipped individually with its reason, and the stage fails only
+when no approved candidate produced a usable moment.
+
 Re-running the agent for a job replaces that candidate's moments
-(delete + re-insert), so a re-run never duplicates moments.
+(delete + re-insert), so a re-run never duplicates moments. A
+file already downloaded (storage_path points at an existing
+file) is reused, never re-downloaded.
 """
 from __future__ import annotations
 
@@ -36,6 +48,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.agents.rights.gate import approved_candidate_ids, require_approved
 from app.agents.video_intelligence.analysis import ANALYSER, detect_moments
+from app.agents.video_intelligence.download import FootageDownload, FootageDownloader
 from app.agents.video_intelligence.frames import extract_samples, save_frame_jpeg
 from app.agents.video_intelligence.probe import VideoProbe, probe_video
 from app.agents.video_intelligence.verify import verify_moments
@@ -56,6 +69,7 @@ class CandidateAnalysis(BaseModel):
     probe: VideoProbe | None = None
     moment_ids: list[str] = Field(default_factory=list)
     reason: str | None = None
+    download: FootageDownload | None = None
 
 
 class VideoAnalysisReport(BaseModel):
@@ -77,6 +91,7 @@ class VideoIntelligenceService:
         self._sessions = sessionmaker(bind=engine)
         self.jobs = JobService(engine)
         self.storage = get_storage(self.settings)
+        self.downloader = FootageDownloader(self.settings)
 
     # ------------------------------------------------------------ main entry
     def run(self, job_id: str,
@@ -84,6 +99,9 @@ class VideoIntelligenceService:
         job = self.jobs.get_job(job_id)  # raises NotFoundError for unknown jobs
         footage_paths = {k: Path(v) for k, v in (footage_paths or {}).items()}
         started = time.monotonic()
+        total_budget_bytes = int(self.settings.footage_total_max_mb * 1024 * 1024)
+        downloaded_bytes_total = 0
+        downloaded_count = 0
         with self._sessions() as session:
             approved = approved_candidate_ids(session, job_id)
             if not approved:
@@ -98,10 +116,14 @@ class VideoIntelligenceService:
                 # RIGHTS GATE FIRST — before the file is even looked at.
                 require_approved(session, job_id, [candidate_id],
                                  purpose="video_intelligence")
-                result = self._analyse_candidate(session, job_id, candidate_id,
-                                                 footage_paths.get(candidate_id))
+                result = self._analyse_candidate(
+                    session, job_id, candidate_id, footage_paths.get(candidate_id),
+                    budget_bytes=max(0, total_budget_bytes - downloaded_bytes_total))
                 results.append(result)
                 all_moment_ids.extend(result.moment_ids)
+                if result.download is not None and result.download.status == "downloaded":
+                    downloaded_bytes_total += result.download.bytes_downloaded
+                    downloaded_count += 1
                 if result.status == "analyzed":
                     analysed_ids.append(candidate_id)
             session.commit()
@@ -122,29 +144,49 @@ class VideoIntelligenceService:
                 "analyzed_candidates": len(analysed_ids),
                 "skipped_candidates": len(approved) - len(analysed_ids),
                 "moments": len(all_moment_ids),
+                "downloaded_candidates": downloaded_count,
+                "downloaded_bytes": downloaded_bytes_total,
                 "duration_ms": int((time.monotonic() - started) * 1000),
             })
 
     # ------------------------------------------------------------ one candidate
     def _analyse_candidate(self, session, job_id: str, candidate_id: str,
-                           supplied_path: Path | None) -> CandidateAnalysis:
+                           supplied_path: Path | None,
+                           budget_bytes: int = 0) -> CandidateAnalysis:
         candidate = (session.query(CandidateVideo)
                      .filter(CandidateVideo.id == candidate_id,
                              CandidateVideo.job_id == job_id).first())
         if candidate is None:
             raise NotFoundError(f"candidate {candidate_id} not found for job {job_id}")
         path = supplied_path
+        download: FootageDownload | None = None
         if path is None:
             footage = (session.query(ApprovedFootage)
                        .filter(ApprovedFootage.candidate_video_id == candidate_id).first())
             if footage is not None and footage.storage_path:
-                path = Path(footage.storage_path)
+                recorded = Path(footage.storage_path)
+                # A recorded path whose file is gone (storage
+                # cleaned, database kept) falls through to the
+                # download below instead of failing on a stale path.
+                if recorded.is_file():
+                    path = recorded
         if path is None:
+            # No local file yet: try downloading the approved source
+            # (Rights re-checked inside the downloader). A failed
+            # download only skips this candidate — the next approved
+            # candidate still gets its chance.
+            download = self.downloader.download_candidate(
+                session, job_id, candidate_id, budget_bytes)
+            if download.local_path:
+                path = Path(download.local_path)
+        if path is None:
+            detail = (download.reason if download is not None else
+                      "no download was attempted")
             return CandidateAnalysis(
                 candidate_video_id=candidate_id, status="skipped",
+                download=download,
                 reason="no local footage file: ApprovedFootage.storage_path is empty "
-                       "and no footage path was supplied (downloading source videos "
-                       "is not configured in Prompt 05)")
+                       f"and no footage path was supplied ({detail})")
         try:
             probe = probe_video(path, ffprobe_path=self.settings.ffprobe_path)
         except (StorageError, ValidationError) as exc:
@@ -167,6 +209,7 @@ class VideoIntelligenceService:
         if not kept:
             return CandidateAnalysis(
                 candidate_video_id=candidate_id, status="skipped", probe=probe,
+                download=download,
                 reason="no usable moments survived timestamp verification "
                        f"({len(verified)} dropped: "
                        + "; ".join(sorted({i for v in verified for i in v.issues})[:3])
@@ -214,7 +257,8 @@ class VideoIntelligenceService:
         candidate.status = "analyzed"
         session.flush()
         return CandidateAnalysis(candidate_video_id=candidate_id, status="analyzed",
-                                 probe=probe, moment_ids=moment_ids)
+                                 probe=probe, moment_ids=moment_ids,
+                                 download=download)
 
     def _save_thumbnail(self, path: Path, moment_id: str, job_id: str,
                         candidate_id: str, moment, row: AnalyzedMoment) -> None:
@@ -279,8 +323,11 @@ class VideoIntelligenceService:
             "Moments come from scene segments; a long unchanging shot "
             "yields one moment at most, and a cut-heavy video yields "
             "many short ones.",
-            "Only approved footage with a local file is analysed. "
-            "Downloading source videos is not configured in Prompt 05.",
+            "Only approved footage is analysed. Approved Internet "
+            "Archive footage is downloaded automatically when no "
+            "local file exists (per-file cap 500 MB, per-job cap "
+            "1 GB by default); very large files are skipped, and "
+            "YouTube downloads are not in scope.",
             "Timestamps are measured from sampled frames (1 fps by "
             "default); boundaries are accurate to about ±1 frame at "
             "the sampling rate, then verified by re-reading the file.",

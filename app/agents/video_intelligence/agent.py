@@ -9,13 +9,16 @@ approved candidate). The full report (probe, per-candidate
 results, limitations) is persisted in the database — the
 orchestrator contract carries only the ids, by design.
 
-Footage files are resolved from ApprovedFootage.storage_path (the
-channel a download step will fill in later); a task may also
-carry ``footage_paths`` in its input, e.g. {"candidate_id": "/path/to/file.mp4"}.
-When no approved candidate has a local file, the service raises —
+Footage files are resolved from ApprovedFootage.storage_path; when
+an approved candidate has no local file, the service downloads
+it from the Internet Archive first (see download.py — Rights
+re-checked server-side, caps enforced, ffprobe-verified). A task
+may also carry ``footage_paths`` in its input, e.g.
+{"candidate_id": "/path/to/file.mp4"}. When no approved candidate
+has a local file and none can be downloaded, the service raises —
 the engine retries, then fails the job honestly. Unapproved
-footage is never analysed: the service calls the Rights gate
-before touching any file.
+footage is never analysed or downloaded: the service calls the
+Rights gate before touching any file.
 """
 from __future__ import annotations
 

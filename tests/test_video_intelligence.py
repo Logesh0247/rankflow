@@ -64,7 +64,12 @@ def _pingpong(frame_index: int, speed: int, span: int) -> int:
 def _settings(**overrides) -> Settings:
     base = {"orchestrator_backoff_base_seconds": 0.01,
             "orchestrator_timeout_seconds": 30.0,
-            "rights_fetch_ia_metadata": False}
+            "rights_fetch_ia_metadata": False,
+            # Downloads stay off here: the pre-download tests use
+            # seeded local files, and the no-footage tests must fail
+            # without touching the live Archive. Download behaviour
+            # is covered by tests/test_footage_download.py.
+            "footage_download_enabled": False}
     base.update(overrides)
     return Settings(**base)
 
