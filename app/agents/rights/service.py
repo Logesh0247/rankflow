@@ -82,6 +82,13 @@ class RightsService:
             verified: list[RightsVerificationRead] = []
             for candidate in candidates:
                 verified.append(self._verify_in_session(session, candidate, ManualEvidence()))
+                # Short transactions (2026-11-21 lock fix): commit
+                # after EACH candidate. _verify_in_session fetches
+                # licence metadata over the network (up to 10 s) for
+                # the NEXT candidate, and that fetch must never run
+                # while this candidate's uncommitted writes hold a
+                # lock that blocks other jobs.
+                session.commit()
             session.commit()
         approved = [v for v in verified if v.verdict == "approved"]
         rejected = [v for v in verified if v.verdict == "rejected"]

@@ -16,7 +16,7 @@ must permit commercial use, modification AND redistribution.
 
 | File | Role |
 |---|---|
-| `app/agents/rights/licenses.py` | Phase 1 — licence catalogue: CC BY / BY-SA / BY-NC / BY-ND / BY-NC-SA / BY-NC-ND (v1.0–4.0), CC0, Public Domain Mark, and recognised non-permitting markers (standard YouTube licence, all rights reserved, test-only) |
+| `app/agents/rights/licenses.py` | Phase 1 — licence catalogue: CC BY / BY-SA / BY-NC / BY-ND / BY-NC-SA / BY-NC-ND (v1.0–4.0), CC0, Public Domain Mark, Pexels License, Pixabay Content License, and recognised non-permitting markers (standard YouTube licence, all rights reserved, test-only) |
 | `app/agents/rights/evidence.py` | Phases 1–3 — pure `evaluate()`: licence → verdict, expiry, manual evidence |
 | `app/agents/rights/gate.py` | Phase 4 — server-side enforcement: `is_approved`, `require_approved`, `approved_candidate_ids` |
 | `app/agents/rights/attribution.py` | Phase 5 — attribution text generation from stored evidence |
@@ -166,9 +166,14 @@ Live measurement on the real parkour job
   candidates cannot proceed without a human supplying evidence,
   which is by design, not a bug. A job whose candidates are all
   unlicensed will fail at rights until reviewed.
-* The catalogue covers Creative Commons licences v1.0–4.0, CC0
-  and the Public Domain Mark. Other licences (e.g. GPL, MIT,
-  bespoke creator licences) are `needs_review`, not guessed.
+* The catalogue covers Creative Commons licences v1.0–4.0, CC0,
+  the Public Domain Mark, and the Pexels License / Pixabay
+  Content License (free commercial use, modification and
+  redistribution, no attribution required — every video on those
+  platforms is released under the platform licence, so the
+  provider records the platform licence URL and the catalogue
+  approves it). Other licences (e.g. GPL, MIT, bespoke creator
+  licences) are `needs_review`, not guessed.
 * No YouTube licence check runs live: YouTube discovery is
   disabled without a key, and a YouTube candidate with no licence
   is `needs_review` with a note that the standard licence permits

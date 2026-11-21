@@ -10,18 +10,41 @@ What this module does, and its rules:
   `ApprovedFootage.storage_path` empty), download the approved
   source video to local storage and record `storage_path` on the
   `ApprovedFootage` row.
-* Live source is Internet Archive only: given an item identifier
-  (the candidate's `external_video_id`), fetch
+* Live sources are Internet Archive and YouTube. Archive: given an
+  item identifier (the candidate's `external_video_id`), fetch
   `{base}/metadata/{id}`, pick a playable video file (mp4 first,
-  then webm, then mov, …), stream it to disk and verify it with
-  ffprobe (duration > 0) before it is ever analysed. A file that
-  fails to download or probe is deleted, never analysed, never
-  presented as if it existed.
+  then webm, mov, …), stream it to disk and verify it with
+  ffprobe (duration > 0) before it is ever analysed. YouTube: an
+  approved CC-licensed video is downloaded with yt-dlp (mp4,
+  `--max-filesize` enforces the per-file cap) and verified the
+  same way. Pexels / Pixabay: approved stock clips are fetched
+  by re-querying the provider API for the video id (the search
+  response carries no file link), the direct MP4 link is selected
+  (Pexels: largest mp4 up to 1920 px wide; Pixabay: medium 1080p
+  tier first), streamed with the same caps and verified the same
+  way. A file that fails to download or probe is deleted, never
+  analysed, never presented as if it existed.
 * RIGHTS GATE: download ONLY footage with an approved Rights
   record. The gate is re-checked server-side
   (`require_approved`) before every download. A rejected or
   needs-review candidate is never downloaded — a failed gate
   returns a `failed` result, it never raises past the caller.
+  For YouTube this is also what enforces "CC only": Rights
+  approves a YouTube video only on a Creative Commons licence
+  (CC BY 3.0) or a recorded human permission grant, so a
+  standard-licence video can never reach the downloader.
+* NO TRANSACTION SPANS A DOWNLOAD (2026-11-21 lock fix): the
+  streaming download / yt-dlp run happens with no database
+  session open at all — the gate and lookups are reads done
+  first, then the file is fetched, and only afterwards a short
+  session records `storage_path` + duration and commits
+  immediately. A long download therefore never holds a write
+  lock that blocks other jobs (the live incident: the database
+  locked while an Archive download streamed, and every other
+  write — new jobs, cancels, even recording the failure —
+  failed with "database is locked"). SQLite WAL mode + a 30 s
+  busy timeout (see `app/database/session.py`) is the other
+  half of that fix.
 * Fail soft per file: one candidate failing to download marks
   that footage unusable and the stage moves on to the next
   approved candidate. Only when no approved candidate could be
@@ -29,35 +52,50 @@ What this module does, and its rules:
 * Bounds for the Render free plan: a per-file size cap and a
   per-job total cap (both configurable, see `Settings`). Files
   over the cap are skipped with a clear reason; the caps are
-  enforced while streaming, so an oversized file is aborted
-  mid-download instead of filling the disk.
-* YouTube downloads are NOT in scope: a non-Archive platform
-  is skipped with a reason saying so. YouTube search itself is
-  still unconfigured.
+  enforced while streaming (Archive) or by yt-dlp's
+  `--max-filesize` (YouTube), so an oversized file is aborted
+  instead of filling the disk.
+* A platform with no downloader (TikTok, Facebook, Instagram,
+  Pinterest — none of them offers an official search/download
+  API) is skipped with a reason saying so. Pexels and Pixabay
+  ARE downloaded (direct MP4 links from their APIs).
 
 The HTTP client mirrors the egress-proxy handling in
 `app/agents/research/providers.py` (trust_env=False, proxy from
 the environment, TLS verified — never disabled), except it
 bypasses the proxy for loopback hosts so tests can serve
 metadata and files from a local test server via
-`footage_archive_base_url`.
+`footage_archive_base_url`. yt-dlp is run as a subprocess with
+TLS verification left on: it verifies against the system CA
+bundle, as on the deploy host. It is never run with certificate
+checks disabled.
 """
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import ssl
+import subprocess
+import sys
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy.orm import sessionmaker
 
-from app.agents.research.providers import VIDEO_EXTENSIONS
+from app.agents.research.providers import (
+    VIDEO_EXTENSIONS,
+    select_pexels_file,
+    select_pixabay_file,
+)
 from app.agents.rights.gate import latest_evidence, require_approved
 from app.agents.video_intelligence.probe import probe_video
 from app.core.config import Settings, get_settings
 from app.core.errors import StorageError, ValidationError
 from app.core.security import safe_join
+from app.database.session import make_engine
 from app.models.models import ApprovedFootage, CandidateVideo, Source
 from app.storage.local import get_storage
 
@@ -77,6 +115,7 @@ class FootageDownload(BaseModel):
     source_url: str | None = None
     local_path: str | None = None
     bytes_downloaded: int = 0
+    duration_seconds: float | None = None
     reason: str | None = None
 
 
@@ -150,25 +189,68 @@ def _http_client(timeout: float, base_url: str) -> httpx.Client:
                         verify=verify, follow_redirects=True)
 
 
+def _run_ytdlp(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """Run yt-dlp as a subprocess, capturing output.
+
+    TLS verification is left on (yt-dlp verifies against the
+    system CA bundle); it is never run with certificate checks
+    disabled. A timeout raises subprocess.TimeoutExpired.
+    """
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
 class FootageDownloader:
-    """Downloads approved Internet Archive footage to local storage.
+    """Downloads approved Internet Archive, YouTube and stock
+    (Pexels / Pixabay) footage to local storage.
 
     `client_factory` is a test seam: a callable taking a timeout
     and returning an `httpx.Client` (e.g. one built on a
-    `MockTransport`). Production always uses the real client.
+    `MockTransport`). `ytdlp_runner` is the test seam for the
+    YouTube download: a callable taking (cmd, timeout) and
+    returning an object with `returncode`, `stdout` and `stderr`
+    (like `subprocess.CompletedProcess`). `session_factory` is
+    the test seam for the short record session: a callable
+    returning a new SQLAlchemy session. Production always uses
+    the real client, the real yt-dlp binary, and a session from
+    its own engine (same database file — WAL mode lets it write
+    while other connections read).
     """
 
     def __init__(self, settings: Settings | None = None,
-                 client_factory=None):
+                 client_factory=None, ytdlp_runner=None,
+                 session_factory=None):
         self.settings = settings or get_settings()
         self.storage = get_storage(self.settings)
         self._client_factory = client_factory or _http_client
+        self._ytdlp_runner = ytdlp_runner or _run_ytdlp
+        self._session_factory = session_factory
+        self._engine = None
+
+    def _new_session(self):
+        """A fresh short-lived session, used ONLY to record a
+        completed download (open, write, commit, close). It is
+        never held open across a download."""
+        if self._session_factory is None:
+            if self._engine is None:
+                self._engine = make_engine(self.settings)
+            self._session_factory = sessionmaker(bind=self._engine)
+        return self._session_factory()
 
     # ------------------------------------------------------------ main entry
     def download_candidate(self, session, job_id: str, candidate_id: str,
                            budget_bytes: int) -> FootageDownload:
         """Download one approved candidate's source video, or say
         honestly why it could not be downloaded.
+
+        Transaction discipline (2026-11-21 lock fix): the `session`
+        passed in is used ONLY for reads (rights gate, candidate
+        and footage lookups). The long download itself — streaming
+        an Archive file or running yt-dlp — happens with no
+        database session open at all. Only after the file is on
+        disk and verified does a short session record
+        `storage_path` + duration and commit immediately. A
+        download therefore never holds a transaction open while
+        it streams.
 
         Never raises for a download problem: every failure is a
         `failed`/`skipped` result with a reason, so the caller can
@@ -203,30 +285,86 @@ class FootageDownloader:
         source = (session.query(Source)
                   .filter(Source.id == candidate.source_id).first())
         platform = source.platform if source else None
-        if platform != "internet_archive":
-            return FootageDownload(
-                candidate_video_id=candidate_id, status="skipped",
-                reason=f"source platform {platform or 'unknown'} has no "
-                       "downloader configured — only Internet Archive "
-                       "footage is downloaded (YouTube downloads are "
-                       "not in scope)")
-        identifier = (candidate.external_video_id or "").strip()
-        if not identifier:
-            return FootageDownload(candidate_video_id=candidate_id,
-                                   status="failed",
-                                   reason="candidate has no external video id")
         if not self.settings.footage_download_enabled:
             return FootageDownload(
                 candidate_video_id=candidate_id, status="skipped",
                 reason="footage download is disabled "
                        "(FOOTAGE_DOWNLOAD_ENABLED=false)")
-        return self._download_archive(session, job_id, candidate_id,
-                                      footage, identifier, budget_bytes)
+        if platform == "internet_archive":
+            identifier = (candidate.external_video_id or "").strip()
+            if not identifier:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    reason="candidate has no external video id")
+            result = self._download_archive(job_id, candidate_id,
+                                            identifier, budget_bytes)
+        elif platform == "youtube":
+            video_id = (candidate.external_video_id or "").strip()
+            if not video_id:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    reason="candidate has no external video id")
+            result = self._download_youtube(job_id, candidate_id,
+                                            video_id, budget_bytes)
+        elif platform in ("pexels", "pixabay"):
+            external_id = (candidate.external_video_id or "").strip()
+            if not external_id:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    reason="candidate has no external video id")
+            result = self._download_stock(job_id, candidate_id,
+                                          platform, external_id,
+                                          budget_bytes)
+        else:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="skipped",
+                reason=f"source platform {platform or 'unknown'} has no "
+                       "downloader configured — only Internet Archive, "
+                       "YouTube (Creative Commons), Pexels and Pixabay "
+                       "footage is downloaded; TikTok, Facebook, "
+                       "Instagram and Pinterest offer no official "
+                       "search/download API")
+        if result.status != "downloaded" or not result.local_path:
+            return result
+        # The file is downloaded and verified. Record it in a
+        # short session: open, write, commit, close — never held
+        # open across the download that just finished.
+        recorded = self._record_download(
+            job_id, candidate_id, result.local_path,
+            result.duration_seconds)
+        if not recorded:
+            self._remove_quietly(Path(result.local_path))
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=result.source_url,
+                reason="downloaded file could not be recorded in the database")
+        return result
+
+    def _record_download(self, job_id: str, candidate_id: str,
+                         local_path: str, duration: float | None) -> bool:
+        """Record a verified download on the ApprovedFootage row in
+        a short session. Returns False (after rollback) when the
+        record could not be written — the caller deletes the file."""
+        try:
+            with self._new_session() as session:
+                footage = self._footage_row(session, job_id, candidate_id)
+                self._record_footage(session, job_id, candidate_id, footage,
+                                     local_path, duration or 0.0)
+                session.commit()
+            return True
+        except Exception:  # noqa: BLE001 — a failed record is a failed download
+            return False
 
     # ------------------------------------------------------------ Archive flow
-    def _download_archive(self, session, job_id: str, candidate_id: str,
-                          footage, identifier: str,
+    def _download_archive(self, job_id: str, candidate_id: str,
+                          identifier: str,
                           budget_bytes: int) -> FootageDownload:
+        """Fetch an Archive item's video file to local storage.
+
+        No database session is open during this call: the file is
+        streamed and verified first; the caller records it
+        afterwards in a short session. `job_id` / `candidate_id`
+        are plain strings used only to build the storage path."""
         settings = self.settings
         base = settings.footage_archive_base_url.rstrip("/")
         max_file_bytes = int(settings.footage_max_mb * 1024 * 1024)
@@ -284,14 +422,254 @@ class FootageDownloader:
                 candidate_video_id=candidate_id, status="failed",
                 source_url=source_url,
                 reason=f"downloaded file failed ffprobe verification: {exc}")
-        footage = self._record_footage(session, job_id, candidate_id,
-                                       footage, str(target), probe.duration_seconds)
-        session.flush()
         return FootageDownload(
             candidate_video_id=candidate_id, status="downloaded",
             source_url=source_url, local_path=str(target),
             bytes_downloaded=written,
+            duration_seconds=probe.duration_seconds,
             reason=f"downloaded {safe_name} "
+                   f"({written / 1024 / 1024:.1f} MB, "
+                   f"{probe.duration_seconds:.1f}s)")
+
+    # ------------------------------------------------------------ YouTube flow
+    def _resolve_ytdlp(self) -> list[str] | None:
+        """Command prefix that runs yt-dlp, or None when it is not
+        installed. Prefers the configured binary on PATH, then
+        `python -m yt_dlp` when the package is importable."""
+        binary = shutil.which(self.settings.footage_ytdlp_path)
+        if binary:
+            return [binary]
+        import importlib.util
+        if importlib.util.find_spec("yt_dlp") is not None:
+            return [sys.executable, "-m", "yt_dlp"]
+        return None
+
+    def _download_youtube(self, job_id: str, candidate_id: str,
+                          video_id: str,
+                          budget_bytes: int) -> FootageDownload:
+        """Download an approved CC-licensed YouTube video with yt-dlp.
+
+        No database session is open during this call: yt-dlp runs
+        and the file is verified first; the caller records it
+        afterwards in a short session. `job_id` / `candidate_id`
+        are plain strings used only to build the storage path.
+
+        The Rights gate was already re-checked in
+        `download_candidate`, so reaching here means Rights
+        approved this video — on a Creative Commons licence or a
+        recorded human permission grant. A standard-licence video
+        can never reach this method. The video id is validated
+        (YouTube ids are 11 chars of [A-Za-z0-9_-]) so no
+        attacker-controlled string reaches the command line.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", video_id):
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"unsafe YouTube video id: {video_id!r}")
+        limit = min(int(self.settings.footage_max_mb * 1024 * 1024),
+                    budget_bytes)
+        if limit <= 0:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="skipped",
+                reason="no download budget left for this job "
+                       f"(per-job cap {self.settings.footage_total_max_mb:.0f} MB)")
+        prefix = self._resolve_ytdlp()
+        if prefix is None:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason="yt-dlp is not installed — install it "
+                       "(pip install yt-dlp) or set FOOTAGE_YTDLP_PATH")
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        rel = f"jobs/{job_id}/footage/{candidate_id}/{video_id}.mp4"
+        try:
+            target = safe_join(self.storage.root, rel)
+        except ValidationError as exc:
+            return FootageDownload(candidate_video_id=candidate_id,
+                                   status="failed", reason=str(exc))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        cmd = prefix + [
+            "--no-warnings", "--no-playlist",
+            "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--merge-output-format", "mp4",
+            "--max-filesize", str(limit),
+            "--output", str(target), url]
+        try:
+            completed = self._ytdlp_runner(
+                cmd, self.settings.footage_download_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=url,
+                reason="YouTube download timed out after "
+                       f"{self.settings.footage_download_timeout_seconds:.0f}s")
+        except OSError as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=url, reason=f"could not run yt-dlp: {exc}")
+        stderr = (getattr(completed, "stderr", "") or "").strip()
+        if completed.returncode != 0:
+            self._remove_quietly(target)
+            if "larger than max-filesize" in stderr:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="skipped",
+                    source_url=url,
+                    reason=f"YouTube video exceeds the size cap "
+                           f"({limit / 1024 / 1024:.0f} MB)")
+            detail = stderr[-300:] if stderr else f"exit code {completed.returncode}"
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=url, reason=f"yt-dlp failed: {detail}")
+        # yt-dlp reports success; the file must actually be there.
+        if not target.is_file():
+            found = sorted(target.parent.glob(f"{video_id}.*"))
+            if found:
+                target = found[0]
+            else:
+                return FootageDownload(
+                    candidate_video_id=candidate_id, status="failed",
+                    source_url=url,
+                    reason="yt-dlp finished but produced no file")
+        written = int(target.stat().st_size)
+        if written > limit:
+            # yt-dlp's --max-filesize is checked before the
+            # download; a merged file can still end up larger.
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="skipped",
+                source_url=url,
+                reason=f"YouTube video exceeds the size cap "
+                       f"({limit / 1024 / 1024:.0f} MB)")
+        # Verify before anything is recorded: a file that does not
+        # probe as a video is deleted, never analysed.
+        try:
+            probe = probe_video(target, ffprobe_path=self.settings.ffprobe_path)
+        except (StorageError, ValidationError) as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=url,
+                reason=f"downloaded file failed ffprobe verification: {exc}")
+        return FootageDownload(
+            candidate_video_id=candidate_id, status="downloaded",
+            source_url=url, local_path=str(target),
+            bytes_downloaded=written,
+            duration_seconds=probe.duration_seconds,
+            reason=f"downloaded {video_id}.mp4 "
+                   f"({written / 1024 / 1024:.1f} MB, "
+                   f"{probe.duration_seconds:.1f}s)")
+
+    # ------------------------------------------------------------ stock flow (Pexels / Pixabay)
+    def _download_stock(self, job_id: str, candidate_id: str,
+                        platform: str, external_id: str,
+                        budget_bytes: int) -> FootageDownload:
+        """Download an approved Pexels / Pixabay stock clip.
+
+        No database session is open during this call: the provider
+        API is queried, the file is streamed and verified first;
+        the caller records it afterwards in a short session.
+
+        The search response carries no file link, so the video is
+        re-fetched by id from the provider API (Pexels "get video
+        by id", Pixabay `id` param) — the same re-fetch pattern as
+        the Archive metadata lookup — and the direct MP4 link is
+        selected from that response. The Rights gate was already
+        re-checked in `download_candidate`, so reaching here means
+        Rights approved this clip on its platform licence (Pexels
+        License / Pixabay Content License).
+        """
+        settings = self.settings
+        api_key = (settings.pexels_api_key if platform == "pexels"
+                   else settings.pixabay_api_key)
+        if not api_key:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"{platform} API key is not configured — the clip "
+                       f"cannot be re-fetched for download")
+        limit = min(int(settings.footage_max_mb * 1024 * 1024),
+                    budget_bytes)
+        if limit <= 0:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="skipped",
+                reason="no download budget left for this job "
+                       f"(per-job cap {settings.footage_total_max_mb:.0f} MB)")
+        if platform == "pexels":
+            detail_url = f"https://api.pexels.com/videos/videos/{external_id}"
+            headers = {"Authorization": api_key}
+            params = None
+        else:
+            detail_url = "https://pixabay.com/api/videos/"
+            headers = None
+            params = {"key": api_key, "id": external_id}
+        try:
+            with self._client_factory(settings.footage_metadata_timeout_seconds,
+                                      detail_url) as client:
+                response = client.get(detail_url, headers=headers,
+                                      params=params)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"{platform} video lookup failed: HTTP "
+                       f"{exc.response.status_code} for id {external_id!r}")
+        except Exception as exc:  # noqa: BLE001 — network/JSON, reported not raised
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"{platform} video lookup failed for id "
+                       f"{external_id!r}: {exc}")
+        if platform == "pexels":
+            file_url = select_pexels_file(
+                data.get("video_files") if isinstance(data, dict) else None)
+        else:
+            hits = data.get("hits") if isinstance(data, dict) else None
+            hit = hits[0] if isinstance(hits, list) and hits else None
+            file_url = select_pixabay_file(
+                hit.get("videos") if isinstance(hit, dict) else None)
+        if not file_url:
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"{platform} returned no downloadable MP4 file "
+                       f"for id {external_id!r}")
+        # Safe file name from the link itself; fall back to the id.
+        base_name = Path(urlparse(file_url).path).name
+        if Path(base_name).suffix.lower() not in VIDEO_EXTENSIONS:
+            base_name = f"{external_id}.mp4"
+        if not base_name or base_name in (".", ".."):
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                reason=f"unsafe file name in {platform} file link: {file_url!r}")
+        rel = f"jobs/{job_id}/footage/{candidate_id}/{base_name}"
+        try:
+            target = safe_join(self.storage.root, rel)
+        except ValidationError as exc:
+            return FootageDownload(candidate_video_id=candidate_id,
+                                   status="failed", reason=str(exc))
+        try:
+            written = self._stream_to_file(file_url, target, limit)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=file_url,
+                reason=f"download failed: {exc}")
+        # Verify before anything is recorded: a file that does not
+        # probe as a video is deleted, never analysed.
+        try:
+            probe = probe_video(target, ffprobe_path=settings.ffprobe_path)
+        except (StorageError, ValidationError) as exc:
+            self._remove_quietly(target)
+            return FootageDownload(
+                candidate_video_id=candidate_id, status="failed",
+                source_url=file_url,
+                reason=f"downloaded file failed ffprobe verification: {exc}")
+        return FootageDownload(
+            candidate_video_id=candidate_id, status="downloaded",
+            source_url=file_url, local_path=str(target),
+            bytes_downloaded=written,
+            duration_seconds=probe.duration_seconds,
+            reason=f"downloaded {base_name} "
                    f"({written / 1024 / 1024:.1f} MB, "
                    f"{probe.duration_seconds:.1f}s)")
 

@@ -19,6 +19,17 @@ nobody confuses one for another (the brief warns about this):
 Prioritisation uses ``combined = 0.6*relevance + 0.2*completeness
 + 0.2*reliability``. ``relevance_score`` stored on the candidate is
 the pure relevance value, so later stages can re-weight it.
+
+Duration preference (2026-11-21): a Short is built from short
+clips, so the combined score is multiplied by a duration factor
+(see ``duration_factor``): videos under 10 minutes get a boost,
+videos over the configured cap (default 15 minutes) score 0 and
+are excluded by the service, and videos with unknown duration
+are neither boosted nor penalised — they are kept. The factor
+applies in the shared scoring path, so it covers every provider
+(Archive durations arrive late via enrichment — the service
+re-applies the cap after enrichment, so a movie whose duration
+only becomes known then is still excluded).
 """
 from __future__ import annotations
 
@@ -32,8 +43,42 @@ from app.agents.research.topic import tokenize
 PROVIDER_RELIABILITY: dict[str, float] = {
     "internet_archive": 0.8,
     "youtube": 0.7,
+    # Stock libraries: curated platform metadata and stable file
+    # URLs, but generic/staged footage — trustworthy records, not
+    # specific viral moments.
+    "pexels": 0.75,
+    "pixabay": 0.75,
     "test": 0.3,
 }
+
+# A Short is cut from short clips: under this long a video is the
+# right shape for a moment, so it is boosted.
+SHORT_VIDEO_SECONDS = 600.0  # 10 minutes
+DEFAULT_MAX_CANDIDATE_MINUTES = 15.0
+
+
+def duration_factor(duration_seconds: float | None,
+                    max_candidate_minutes: float = DEFAULT_MAX_CANDIDATE_MINUTES) -> float:
+    """Score multiplier for a candidate's duration.
+
+    Unknown duration (None) -> 1.0: kept, never excluded, just not
+    boosted — many Archive candidates report no duration. Under
+    10 minutes -> 1.15: a clear boost for the short clips a Short
+    is built from. Between 10 minutes and the cap -> 1.0. Over the
+    cap -> 0.0: excluded by the service (a feature film is never
+    the right source). The cap is configurable
+    (RESEARCH_MAX_CANDIDATE_MINUTES, default 15).
+    """
+    if duration_seconds is None:
+        return 1.0
+    # The cap is checked first: a video over the cap is excluded
+    # even when it is under the boost threshold (e.g. a 6-minute
+    # video with a 5-minute cap).
+    if duration_seconds > max_candidate_minutes * 60.0:
+        return 0.0
+    if duration_seconds <= SHORT_VIDEO_SECONDS:
+        return 1.15
+    return 1.0
 
 COMPLETENESS_FIELDS = ("title", "creator", "description", "url",
                        "duration_seconds", "published_at", "licence")
@@ -76,14 +121,37 @@ def combined_score(relevance: float, completeness: float, reliability: float) ->
 
 
 class ScoredCandidate:
-    """A RawCandidate with its three evaluation scores attached."""
+    """A RawCandidate with its three evaluation scores attached.
 
-    def __init__(self, candidate: RawCandidate, keywords: list[str]):
+    `combined` is the weighted score multiplied by the duration
+    factor (short videos boosted, over-cap videos score 0 — see
+    `duration_factor`). `max_candidate_minutes` is the exclusion
+    cap; the service passes the configured value, the default
+    (15) matches the default setting.
+    """
+
+    def __init__(self, candidate: RawCandidate, keywords: list[str],
+                 max_candidate_minutes: float = DEFAULT_MAX_CANDIDATE_MINUTES):
         self.candidate = candidate
         self.relevance = relevance_score(keywords, candidate)
         self.completeness = completeness_score(candidate)
         self.reliability = reliability_score(candidate)
-        self.combined = combined_score(self.relevance, self.completeness, self.reliability)
+        self.duration_factor = duration_factor(
+            candidate.duration_seconds, max_candidate_minutes)
+        self.combined = round(
+            combined_score(self.relevance, self.completeness,
+                           self.reliability) * self.duration_factor, 4)
+
+    def rescore_duration(self, max_candidate_minutes: float) -> None:
+        """Re-apply the duration factor after the duration changed
+        (e.g. Archive enrichment filled it in). Recomputes
+        completeness too, since a known duration is a present field."""
+        self.completeness = completeness_score(self.candidate)
+        self.duration_factor = duration_factor(
+            self.candidate.duration_seconds, max_candidate_minutes)
+        self.combined = round(
+            combined_score(self.relevance, self.completeness,
+                           self.reliability) * self.duration_factor, 4)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (f"ScoredCandidate({self.candidate.external_id!r} "
@@ -96,7 +164,13 @@ def _normalize_url(url: str | None) -> str:
     parsed = urlparse(url.lower())
     host = parsed.netloc.removeprefix("www.")
     path = parsed.path.rstrip("/")
-    return f"{host}{path}"
+    # Keep the query string: YouTube watch URLs carry the video id
+    # in `?v=…`, so dropping it would collapse every YouTube video
+    # to the same key ("youtube.com/watch") and dedupe would keep
+    # only one YouTube candidate per job. Identical URLs still
+    # normalise identically.
+    query = parsed.query
+    return f"{host}{path}?{query}" if query else f"{host}{path}"
 
 
 def _normalize_title(title: str | None) -> str:

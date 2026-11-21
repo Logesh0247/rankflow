@@ -126,6 +126,12 @@ class VideoIntelligenceService:
                     downloaded_count += 1
                 if result.status == "analyzed":
                     analysed_ids.append(candidate_id)
+                # Short transactions (2026-11-21 lock fix): commit
+                # after EACH candidate, so no uncommitted work spans
+                # the next candidate's download/analysis. A long
+                # download must never hold a write lock that blocks
+                # other jobs.
+                session.commit()
             session.commit()
         if not all_moment_ids:
             raise ExternalServiceError(
@@ -323,11 +329,13 @@ class VideoIntelligenceService:
             "Moments come from scene segments; a long unchanging shot "
             "yields one moment at most, and a cut-heavy video yields "
             "many short ones.",
-            "Only approved footage is analysed. Approved Internet "
-            "Archive footage is downloaded automatically when no "
-            "local file exists (per-file cap 500 MB, per-job cap "
-            "1 GB by default); very large files are skipped, and "
-            "YouTube downloads are not in scope.",
+            "Only approved footage is analysed. Approved footage is "
+            "downloaded automatically when no local file exists: "
+            "Internet Archive files from the metadata API and "
+            "Creative Commons YouTube videos via yt-dlp (per-file "
+            "cap 500 MB, per-job cap 1 GB by default); very large "
+            "files are skipped, and a standard-licence YouTube "
+            "video is never downloaded.",
             "Timestamps are measured from sampled frames (1 fps by "
             "default); boundaries are accurate to about ±1 frame at "
             "the sampling rate, then verified by re-reading the file.",

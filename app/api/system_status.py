@@ -21,6 +21,23 @@ from app.utils.paths import which_ffmpeg
 router = APIRouter(tags=["settings"])
 
 
+def _effective_providers(settings) -> list[str]:
+    """The discovery chain actually used: RESEARCH_PROVIDERS when
+    set (comma list, deduped, order kept), else the legacy single
+    research_provider (with the Archive fallback the service adds
+    for a non-Archive primary)."""
+    configured = [p.strip() for p in
+                  (settings.research_providers or "").split(",")]
+    configured = [p for p in configured if p]
+    if configured:
+        names = list(dict.fromkeys(configured))
+        return ["test"] if "test" in names else names
+    primary = settings.research_provider
+    if primary in ("test", "internet_archive"):
+        return [primary]
+    return [primary, "internet_archive"]
+
+
 class SettingsStatus(BaseModel):
     app_name: str
     app_env: str
@@ -31,7 +48,10 @@ class SettingsStatus(BaseModel):
     ffmpeg_ok: bool
     ffprobe_ok: bool
     research_provider: str
+    research_providers: list[str] = Field(default_factory=list)
     youtube_configured: bool
+    pexels_configured: bool = False
+    pixabay_configured: bool = False
     tts_provider: str
     tts_configured: bool
     tts_voice: str
@@ -70,7 +90,10 @@ def settings_status() -> SettingsStatus:
         ffmpeg_ok=bool(tools.get("ffmpeg")),
         ffprobe_ok=bool(tools.get("ffprobe")),
         research_provider=settings.research_provider,
+        research_providers=_effective_providers(settings),
         youtube_configured=bool(settings.youtube_api_key),
+        pexels_configured=bool(settings.pexels_api_key),
+        pixabay_configured=bool(settings.pixabay_api_key),
         tts_provider=settings.tts_provider or "not configured",
         # Edge TTS needs no API key: configured = enabled + named.
         # Any other provider still needs a key to count as configured.

@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     # Muse AI is the reasoning provider named in the brief; no Muse
     # API key or endpoint is configured here.
     youtube_api_key: str = ""
+    # Stock-video discovery (Pexels, Pixabay — added after Prompt 12).
+    # Both are free stock libraries with public search APIs and free
+    # API keys (no card): Pexels at pexels.com/api (200 requests/hour,
+    # 20,000/month), Pixabay at pixabay.com/api/docs (100 requests/60 s).
+    # Every video on both is released under the platform licence
+    # (Pexels License / Pixabay Content License), which permits free
+    # commercial use, modification and redistribution without
+    # attribution — the providers record the platform licence URL and
+    # Rights approves it from the catalogue. An empty key disables
+    # that provider (never faked), exactly like YouTube.
+    pexels_api_key: str = ""
+    pixabay_api_key: str = ""
     # Narration TTS (Edge TTS — added after Prompt 12, user-approved).
     # edge-tts is a free, unofficial client of Microsoft's Edge
     # neural-voice endpoint: no API key, no account, no per-character
@@ -81,15 +93,34 @@ class Settings(BaseSettings):
     tts_api_key: str = ""
     speech_api_key: str = ""
 
-    # Research Agent (Prompt 03). Primary discovery provider:
-    # "internet_archive" (real, no key — verified live), "youtube"
-    # (implemented, needs YOUTUBE_API_KEY, falls back to Archive),
-    # "test" (TEST-ONLY deterministic provider, never the default).
-    research_provider: Literal["internet_archive", "youtube", "test"] = "internet_archive"
+    # Research Agent (Prompt 03; multi-provider + YouTube CC-only
+    # added after Prompt 12). `research_providers` is the discovery
+    # chain, a comma-separated list in search order, e.g.
+    # "youtube,internet_archive". When it is empty (the default),
+    # the legacy single `research_provider` is used with the
+    # Internet Archive as fallback. "test" in the list means the
+    # chain is test-only (deterministic, never mixed with real
+    # providers). YouTube is Creative Commons only: the provider
+    # filters search to videoLicense=creativeCommon and records
+    # each video's status.license (CC BY 3.0 for creativeCommon) —
+    # standard-licence videos are recorded as such and Rights
+    # rejects them. A listed YouTube provider with no
+    # YOUTUBE_API_KEY fails per query and the run falls back to the
+    # next provider, with the failure noted in the report — YouTube
+    # results are never faked.
+    research_provider: Literal["internet_archive", "youtube", "pexels", "pixabay", "test"] = "internet_archive"
+    research_providers: str = ""
     research_max_candidates: int = 10
     research_timeout_seconds: float = 15.0
     research_max_attempts: int = 3
     research_enrich_duration: bool = True
+    # Duration preference (2026-11-21): a Short is built from short
+    # clips, so candidates longer than this (minutes) are excluded
+    # from Research — a feature film is never the right source (the
+    # live cat job's only approved candidate was a ~2-hour movie).
+    # Candidates with unknown duration are kept, never excluded;
+    # videos under 10 minutes get a score boost (see scoring.py).
+    research_max_candidate_minutes: int = 15
 
     # Rights Verification Agent (Prompt 04). When a candidate's
     # provider published no licence, the agent re-checks the
@@ -118,26 +149,34 @@ class Settings(BaseSettings):
 
     # Footage download (added after Prompt 12 to fix the live
     # failure where an approved candidate had no local file).
-    # Video Intelligence downloads approved Internet Archive
-    # footage automatically: it fetches the item's metadata,
-    # picks a playable video file (mp4 first), streams it to
-    # local storage and verifies it with ffprobe before any
+    # Video Intelligence downloads approved footage automatically:
+    # Internet Archive items are fetched from the metadata API
+    # (playable file, mp4 first), and approved YouTube videos are
+    # downloaded with yt-dlp — CC-licensed videos only, because
+    # the Rights gate (re-checked server-side before every
+    # download) approves a YouTube video only on a Creative
+    # Commons licence or a recorded human permission grant. A
+    # standard-licence YouTube video is never downloaded. Files
+    # are streamed / capped and verified with ffprobe before any
     # analysis. Downloads happen ONLY for footage the Rights
-    # gate approved — the gate is re-checked server-side before
-    # every download. Per-file and per-job caps protect the
+    # gate approved. Per-file and per-job caps protect the
     # Render free plan (small disk, ephemeral filesystem); a
     # file over the cap is skipped with a clear reason, and a
     # failed download never blocks the other candidates. Set
     # FOOTAGE_DOWNLOAD_ENABLED=false to restore the old
     # behaviour (approved candidates without a local file are
-    # skipped). YouTube downloads are NOT in scope — YouTube
-    # search itself is still unconfigured.
+    # skipped). FOOTAGE_YTDLP_PATH is the yt-dlp executable
+    # (default "yt-dlp" on PATH; falls back to `python -m yt_dlp`
+    # when the binary is missing). TLS is never disabled for
+    # downloads: yt-dlp verifies certificates against the system
+    # bundle, as on the deploy host.
     footage_download_enabled: bool = True
     footage_archive_base_url: str = "https://archive.org"
     footage_max_mb: float = 500.0
     footage_total_max_mb: float = 1024.0
     footage_download_timeout_seconds: float = 300.0
     footage_metadata_timeout_seconds: float = 15.0
+    footage_ytdlp_path: str = "yt-dlp"
 
     # Ranking Agent (Prompt 06). Scores are editorial heuristics
     # from the measured frame signals (scorer

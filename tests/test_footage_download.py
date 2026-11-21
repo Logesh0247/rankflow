@@ -15,6 +15,7 @@ moment detector see a genuine file.
 """
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -157,6 +158,12 @@ class _ArchiveHandler(BaseHTTPRequestHandler):
             if entry is None or entry.get("fail") == "file":
                 self._send(404, b"not found", "text/plain")
                 return
+            # `delay` simulates a slow download (the live incident:
+            # a large Archive file streaming for minutes).
+            delay = entry.get("delay") or 0
+            if delay:
+                import time as _time
+                _time.sleep(delay)
             content = entry["content"]
             self.send_response(200)
             self.send_header("Content-Type", "video/mp4")
@@ -189,14 +196,15 @@ def archive_server(tmp_path):
     base_url = f"http://127.0.0.1:{server.server_address[1]}"
 
     def register(identifier, content, *, size=None, name=None, fail=None,
-                 extra_files=None):
+                 extra_files=None, delay=0):
         name = name or f"{identifier}.mp4"
         metadata = {"identifier": identifier,
                     "files": [{"name": name, "size": size if size is not None else len(content),
                                "format": "MPEG4", "length": "30"}
                               ] + (extra_files or [])}
         _ArchiveHandler.files[identifier] = {
-            "metadata": metadata, "content": content, "fail": fail}
+            "metadata": metadata, "content": content, "fail": fail,
+            "delay": delay}
 
     try:
         yield base_url, register
@@ -441,11 +449,14 @@ def test_downloader_rejects_corrupt_download(engine, tmp_path):
         "a file that fails ffprobe must be deleted, never analysed"
 
 
-def test_downloader_skips_non_archive_platform(engine, tmp_path):
+def test_downloader_skips_platform_with_no_downloader(engine, tmp_path):
+    """TikTok / Facebook / Instagram / Pinterest offer no official
+    search/download API, so a candidate from one of them is
+    skipped with a reason — never downloaded, never faked."""
     content = _write_footage(tmp_path / "clip.mp4").read_bytes()
     job = _new_job(engine)
-    candidate_id = _seed_candidate(engine, job.id, "yt-123",
-                                   licence=_licence_url(), platform="youtube")
+    candidate_id = _seed_candidate(engine, job.id, "tk-123",
+                                   licence=_licence_url(), platform="tiktok")
     _approve(engine, job.id, candidate_id)
     handler = _metadata_handler(content)
     downloader = _downloader_with_mock(engine, handler)
@@ -455,7 +466,8 @@ def test_downloader_skips_non_archive_platform(engine, tmp_path):
                                                budget_bytes=10 ** 9)
         session.commit()
     assert result.status == "skipped"
-    assert "YouTube" in result.reason or "youtube" in result.reason
+    assert "no downloader configured" in result.reason
+    assert "tiktok" in result.reason
     assert handler.calls["count"] == 0
 
 
@@ -625,3 +637,86 @@ def test_failed_job_resumes_from_video_analysis_after_fix(engine, tmp_path, arch
     # a different, expected failure, not the download failure.
     assert result.status == "failed"
     assert "RANKING" in (result.error_message or "")
+
+
+# ------------------------------------------------------------------ SQLite concurrency (2026-11-21 lock fix)
+def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path):
+    """make_engine sets WAL mode + a 30 s busy timeout on every
+    SQLite connection — the fix for the live 'database is locked'
+    incident. WAL persists in the file, so a second engine (a
+    restart, as on Render: init_db -> migrate_all -> uvicorn)
+    sees it too."""
+    from sqlalchemy import text
+
+    from app.database.session import SQLITE_BUSY_TIMEOUT_MS, make_engine
+
+    db = tmp_path / "wal.db"
+    settings = Settings(database_url=f"sqlite:///{db}")
+    first = make_engine(settings)
+    with first.connect() as conn:
+        assert conn.execute(text("PRAGMA journal_mode")).scalar() == "wal"
+        assert conn.execute(text("PRAGMA busy_timeout")).scalar() == SQLITE_BUSY_TIMEOUT_MS
+    # A fresh engine on the same file (restart) still sees WAL.
+    second = make_engine(settings)
+    with second.connect() as conn:
+        assert conn.execute(text("PRAGMA journal_mode")).scalar() == "wal"
+        assert conn.execute(text("PRAGMA busy_timeout")).scalar() == SQLITE_BUSY_TIMEOUT_MS
+    first.dispose()
+    second.dispose()
+
+
+def test_download_in_progress_does_not_block_other_writes(engine, tmp_path, archive_server):
+    """The live incident, replayed faithfully: a job with TWO
+    approved candidates — the first downloads and is analysed
+    (writes flushed), then the second one's file streams slowly.
+    While that second download is in flight, creating another job
+    must succeed — no 'database is locked'.
+
+    On the old code the Video Intelligence session held the first
+    candidate's uncommitted writes across the second download
+    (one commit at the very end), so the concurrent write failed
+    immediately (busy timeout 0, rollback journal). The fix —
+    per-candidate commits, downloads recorded in a short session,
+    WAL + 30 s busy timeout — removes the lock from the
+    download window entirely."""
+    base_url, register = archive_server
+    content = _write_footage(tmp_path / "clip.mp4").read_bytes()
+    register("cc-clip-1", content)
+    register("cc-clip-2", content, delay=3.0)  # slow second download
+    job = _new_job(engine)
+    first_id = _seed_candidate(engine, job.id, "cc-clip-1",
+                               licence=_licence_url())
+    second_id = _seed_candidate(engine, job.id, "cc-clip-2",
+                                licence=_licence_url())
+    _approve(engine, job.id, first_id)
+    _approve(engine, job.id, second_id)
+
+    service = VideoIntelligenceService(engine, _downloader_settings(base_url))
+    result_box: dict = {}
+
+    def run_analysis():
+        result_box["report"] = service.run(job.id)
+
+    thread = threading.Thread(target=run_analysis, daemon=True)
+    thread.start()
+    # Wait until the SECOND file download has started (the first
+    # candidate is fully done by then — its writes are flushed),
+    # then create another job mid-download.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        downloads = [c for c in _ArchiveHandler.calls if c.startswith("/download/")]
+        if len(downloads) >= 2:
+            break
+        time.sleep(0.05)
+    assert len([c for c in _ArchiveHandler.calls
+                if c.startswith("/download/")]) >= 2, \
+        "the second download never started"
+    second = JobService(engine).create_job(
+        JobCreate(topic="TOP 5 FUNNIEST CAT VIDEOS"))
+    assert second.id and second.topic == "TOP 5 FUNNIEST CAT VIDEOS"
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "the analysis thread did not finish"
+    report = result_box["report"]
+    assert report.metrics["analyzed_candidates"] == 2
+    assert report.metrics["downloaded_candidates"] == 2
+    assert report.metrics["moments"] == 10

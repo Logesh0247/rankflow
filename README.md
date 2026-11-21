@@ -284,11 +284,27 @@ tests/ docs/ scripts/ config/ main.py requirements.txt .env.example
 - No PostgreSQL or Redis server in this environment — SQLite is the
   local-testing fallback, labelled as such. Postgres is configured
   by `DATABASE_URL` when a server exists.
-- No YouTube / Muse AI / speech / S3 integration is configured
-  or verified. YouTube discovery exists as code but is disabled
-  without a `YOUTUBE_API_KEY`; the live discovery provider is the
-  Internet Archive (public archive, not a YouTube replacement —
-  relevance ≈ 0.52 for broad topics, 0.84 for exact ones).
+- No Muse AI / speech / S3 integration is configured
+  or verified. YouTube discovery is Creative Commons only and
+  needs a `YOUTUBE_API_KEY` (free quota ≈ 100 searches/day);
+  without a key it raises `ProviderUnavailable` and the run
+  falls back to the Internet Archive (public archive, not a
+  YouTube replacement — relevance ≈ 0.52 for broad topics, 0.84
+  for exact ones). Live YouTube search is unverified on this
+  machine — the egress proxy blocks googleapis.com and
+  youtube.com — so it must be verified by a job on the deploy
+  host. Approved CC YouTube videos are downloaded with yt-dlp;
+  a standard-licence video is never downloaded. Pexels and
+  Pixabay are free stock-video sources (free keys, no card —
+  `PEXELS_API_KEY`, `PIXABAY_API_KEY`); every clip is released
+  under the platform licence, so Rights can approve them, and
+  approved clips download as direct MP4 files. Honest limit:
+  stock clips are generic/staged footage, not specific viral
+  moments. Research prefers short clips: videos under 10 minutes
+  get a score boost and videos over `RESEARCH_MAX_CANDIDATE_MINUTES`
+  (default 15) are excluded — unknown durations are kept, never
+  excluded. TikTok, Facebook, Instagram and Pinterest are out of
+  scope (no official search/download API).
   Video Production synthesises narration with Edge TTS (free, no
   API key) by default, but live synthesis is unverified on this
   machine — the network proxy blocks the Edge endpoint, so

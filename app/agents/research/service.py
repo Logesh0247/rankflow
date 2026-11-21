@@ -3,7 +3,9 @@
 Flow for one job:
   topic -> SearchPlan (topic.py) -> providers (providers.py, in order,
   with fallback) -> RawCandidates -> score + deduplicate (scoring.py)
-  -> persist Source + CandidateVideo rows linked to the job -> return
+  -> duration cap (known-long videos excluded, short ones boosted;
+  re-applied after Archive duration enrichment, with backfill) ->
+  persist Source + CandidateVideo rows linked to the job -> return
   a ResearchReport; the executor (agent.py) hands only the candidate
   ids to the orchestrator as a validated ResearchOutput.
 
@@ -42,13 +44,19 @@ from app.agents.research.providers import (
 )
 from app.agents.research.scoring import (
     ScoredCandidate,
-    combined_score,
-    completeness_score,
     deduplicate,
 )
 from app.agents.research.topic import SearchPlan, understand_topic
 from app.orchestrator.jobs import JobService
 from app.schemas.schemas import CandidateVideoRead
+
+
+def _filter_by_duration(items: list[ScoredCandidate]) -> tuple[list[ScoredCandidate], int]:
+    """Drop candidates the duration factor excludes (factor 0 =
+    known duration over the cap) and count them. Unknown durations
+    (factor 1.0) and short videos (factor 1.15) are always kept."""
+    kept = [item for item in items if item.duration_factor > 0]
+    return kept, len(items) - len(kept)
 
 
 class ProviderResult(BaseModel):
@@ -88,6 +96,7 @@ class ResearchService:
             raise ValueError("topic must not be empty")
         plan = understand_topic(topic)
         max_candidates = max(1, self.settings.research_max_candidates)
+        max_minutes = self.settings.research_max_candidate_minutes
 
         raw, provider_results, queries_used = self._discover(job_id, plan, max_candidates)
         if not raw:
@@ -99,20 +108,42 @@ class ResearchService:
                 f"Queries tried: {queries_used}. Provider outcomes: {detail}. "
                 f"Try a broader topic or add a discovery provider (YOUTUBE_API_KEY).")
 
-        scored = [ScoredCandidate(c, plan.keywords) for c in raw]
+        scored = [ScoredCandidate(c, plan.keywords,
+                                  max_candidate_minutes=max_minutes)
+                  for c in raw]
         kept, duplicates_removed = deduplicate(scored)
-        kept = sorted(kept, key=lambda s: s.combined, reverse=True)[:max_candidates]
-        self._enrich_durations(kept)
-        # Re-sort after enrichment: duration changes completeness only,
-        # so re-score completeness/combined for the kept set.
-        for item in kept:
-            item.completeness = completeness_score(item.candidate)
-            item.combined = combined_score(item.relevance, item.completeness, item.reliability)
+        # Duration cap, first pass: candidates whose duration is
+        # already known (YouTube, Pexels, Pixabay always publish
+        # one; Archive usually does not yet) and exceeds the cap
+        # are excluded — a feature film is never the right source
+        # for a Short. Unknown durations are kept, never excluded.
+        kept, excluded_known = _filter_by_duration(kept)
         kept = sorted(kept, key=lambda s: s.combined, reverse=True)
+        # Enrich durations for a pool larger than the final cut, so
+        # a movie whose duration only becomes known here can be
+        # excluded with a short replacement still available.
+        self._enrich_durations(kept[:max_candidates + 5])
+        # Re-score after enrichment: duration changes completeness
+        # and the duration factor — then re-apply the cap, because
+        # an Archive movie's length is often only known now.
+        for item in kept:
+            item.rescore_duration(max_minutes)
+        kept, excluded_late = _filter_by_duration(kept)
+        kept = sorted(kept, key=lambda s: s.combined, reverse=True)[:max_candidates]
+        duration_excluded = excluded_known + excluded_late
+        if not kept:
+            raise ExternalServiceError(
+                f"Research found {len(raw)} candidates for topic {topic!r}, "
+                f"but all were excluded: {duration_excluded} exceed the "
+                f"{max_minutes:.0f}-minute duration cap "
+                f"(RESEARCH_MAX_CANDIDATE_MINUTES) — a Short is built "
+                f"from short clips. Try a broader topic or raise the cap.")
 
         candidates = self._persist(job_id, kept)
-        limitations = self._limitations(plan, kept, provider_results)
-        metrics = self._metrics(raw, kept, duplicates_removed)
+        limitations = self._limitations(plan, kept, provider_results,
+                                        duration_excluded, max_minutes)
+        metrics = self._metrics(raw, kept, duplicates_removed,
+                                duration_excluded)
         return ResearchReport(
             job_id=job_id, topic=topic, plan=plan, candidates=candidates,
             provider_results=provider_results, duplicates_removed=duplicates_removed,
@@ -162,27 +193,47 @@ class ResearchService:
         return raw, provider_results, queries_used
 
     def _provider_chain(self) -> list:
-        """Primary provider first, Internet Archive as fallback.
+        """Discovery providers in search order.
 
-        The test provider never gets a fallback (its results must stay
-        deterministic), and a chain never contains the same provider twice.
+        `RESEARCH_PROVIDERS` (comma-separated, e.g.
+        "youtube,internet_archive") wins when set: the named
+        providers are tried in that order, duplicates removed. The
+        test provider is never mixed with real ones — if "test" is
+        listed, the chain is test-only, so its results stay
+        deterministic. When RESEARCH_PROVIDERS is empty, the legacy
+        single `research_provider` is used: the primary provider
+        first, Internet Archive as fallback (except for "test",
+        which never gets a fallback). An unknown name is a
+        configuration error, raised honestly instead of silently
+        dropping a provider.
         """
+        configured = [p.strip() for p in
+                      (self.settings.research_providers or "").split(",")]
+        configured = [p for p in configured if p]
+        if configured:
+            names = list(dict.fromkeys(configured))  # dedupe, keep order
+            if "test" in names:
+                return [build_provider("test", self.settings)]
+            return [build_provider(name, self.settings) for name in names]
         primary = self.settings.research_provider
         chain = [build_provider(primary, self.settings)]
         if primary != "test" and primary != "internet_archive":
             chain.append(build_provider("internet_archive", self.settings))
         return chain
 
-    def _enrich_durations(self, kept: list[ScoredCandidate]) -> None:
+    def _enrich_durations(self, items: list[ScoredCandidate]) -> None:
         """Fill in durations from the Internet Archive metadata API.
 
-        Only for internet_archive candidates, at most 5, and only
-        when enabled. A failed enrichment leaves duration as None.
+        Only for internet_archive candidates, and only when enabled.
+        A failed enrichment leaves duration as None. The caller
+        passes a pool larger than the final cut, so a movie whose
+        duration only becomes known here can be excluded by the
+        duration cap with a short replacement still available.
         """
         if not self.settings.research_enrich_duration:
             return
         ia = InternetArchiveProvider(timeout=10.0, max_attempts=1)
-        for item in kept[:5]:
+        for item in items:
             cand = item.candidate
             if cand.platform != "internet_archive" or cand.duration_seconds:
                 continue
@@ -237,8 +288,16 @@ class ResearchService:
     # ------------------------------------------------------------ reporting
     @staticmethod
     def _limitations(plan: SearchPlan, kept: list[ScoredCandidate],
-                     provider_results: list[ProviderResult]) -> list[str]:
+                     provider_results: list[ProviderResult],
+                     duration_excluded: int = 0,
+                     max_minutes: float = 15.0) -> list[str]:
         limitations: list[str] = []
+        if duration_excluded:
+            limitations.append(
+                f"{duration_excluded} candidate(s) were excluded for "
+                f"exceeding the {max_minutes:.0f}-minute duration cap "
+                f"(RESEARCH_MAX_CANDIDATE_MINUTES) — a Short is built "
+                f"from short clips, not feature films.")
         if kept:
             mean_relevance = sum(i.relevance for i in kept) / len(kept)
             if mean_relevance < 0.10:
@@ -265,12 +324,13 @@ class ResearchService:
 
     @staticmethod
     def _metrics(raw: list[RawCandidate], kept: list[ScoredCandidate],
-                 duplicates_removed: int) -> dict:
+                 duplicates_removed: int, duration_excluded: int = 0) -> dict:
         total = len(raw)
         return {
             "raw_candidates": total,
             "kept_candidates": len(kept),
             "duplicate_rate": round(duplicates_removed / total, 4) if total else 0.0,
+            "duration_excluded": duration_excluded,
             "mean_relevance": round(sum(i.relevance for i in kept) / len(kept), 4) if kept else 0.0,
             "mean_completeness": round(sum(i.completeness for i in kept) / len(kept), 4) if kept else 0.0,
             "mean_reliability": round(sum(i.reliability for i in kept) / len(kept), 4) if kept else 0.0,

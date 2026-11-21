@@ -63,17 +63,41 @@ Download rules (all enforced, all honest):
   `require_approved` server-side before every download.
   Rejected, needs-review, expired or never-checked footage is
   never downloaded.
-- **Archive only.** The item identifier is the candidate's
+- **Archive.** The item identifier is the candidate's
   `external_video_id`; metadata comes from
   `{FOOTAGE_ARCHIVE_BASE_URL}/metadata/{id}` and the file from
   `{base}/download/{id}/{file}`. File selection prefers mp4,
   then webm, then mov, then the other playable containers;
   within one extension, known sizes first, largest first.
+- **YouTube (Creative Commons only).** An approved YouTube
+  video is downloaded with yt-dlp (`--format
+  bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`,
+  `--merge-output-format mp4`, `--max-filesize` enforces the
+  per-file cap). Only CC-licensed videos reach the downloader:
+  Rights approves a YouTube video only on a Creative Commons
+  licence or a recorded human permission grant, so a
+  standard-licence video is never downloaded. yt-dlp runs as a
+  subprocess with TLS verification left on; it is never run
+  with certificate checks disabled. The binary is resolved from
+  `FOOTAGE_YTDLP_PATH` on PATH, falling back to
+  `python -m yt_dlp` when the package is importable.
+- **Pexels / Pixabay (stock clips).** An approved stock clip is
+  downloaded as a direct MP4 over HTTPS — no yt-dlp. The search
+  response carries no file link, so the video is re-fetched by
+  id from the provider API first (Pexels "get video by id" with
+  the `Authorization` header, Pixabay `id` param with the `key`
+  param), then the file link is selected (Pexels: largest mp4
+  up to 1920 px wide; Pixabay: medium 1080p tier first) and
+  streamed with the same caps. Only approved clips reach the
+  downloader: Rights approves them on their platform licence
+  (Pexels License / Pixabay Content License). A missing API key
+  at download time is a clear failure, not a silent skip.
 - **Caps.** Per-file cap `FOOTAGE_MAX_MB` (default 500) and
   per-job total cap `FOOTAGE_TOTAL_MAX_MB` (default 1024),
-  enforced while streaming — an oversized file is aborted
-  mid-download, never left half-written. A file over a cap is
-  skipped with a clear reason.
+  enforced while streaming (Archive, Pexels, Pixabay) or by
+  yt-dlp's `--max-filesize` (YouTube) — an oversized file is
+  aborted, never left half-written. A file over a cap is skipped
+  with a clear reason.
 - **Verify before use.** The downloaded file must probe with
   ffprobe (duration > 0); a file that fails verification is
   deleted, never analysed. `ApprovedFootage.storage_path` and
@@ -89,9 +113,18 @@ Download rules (all enforced, all honest):
   `resume_job` / `rerun_from_stage=VIDEO_ANALYSIS`) and reuses
   the file instead of starting over. An already-present local
   file is never re-downloaded.
-- **YouTube downloads are NOT in scope.** A non-Archive
-  platform is skipped with a reason saying so. YouTube search
-  itself is still unconfigured.
+- **No transaction spans a download (2026-11-21 lock fix).**
+  The file streams first with no database session open, and
+  only afterwards a short session records `storage_path` +
+  duration and commits immediately. Video Intelligence also
+  commits after each candidate, so one candidate's writes
+  never sit uncommitted through the next candidate's slow
+  download. SQLite runs in WAL mode with a 30 s busy timeout
+  (see `app/database/session.py` and `docs/DATABASE.md`).
+- **Other platforms are out of scope.** TikTok, Facebook,
+  Instagram and Pinterest offer no official search/download
+  API, so a candidate from one of them is skipped with a reason
+  saying so.
 
 Set `FOOTAGE_DOWNLOAD_ENABLED=false` to restore the old
 behaviour (approved candidates without a local file are
@@ -135,7 +168,8 @@ manifest `manifest.json`):
 `FOOTAGE_DOWNLOAD_ENABLED` (true), `FOOTAGE_ARCHIVE_BASE_URL`
 (`https://archive.org`), `FOOTAGE_MAX_MB` (500),
 `FOOTAGE_TOTAL_MAX_MB` (1024), `FOOTAGE_DOWNLOAD_TIMEOUT_SECONDS`
-(300), `FOOTAGE_METADATA_TIMEOUT_SECONDS` (15).
+(300), `FOOTAGE_METADATA_TIMEOUT_SECONDS` (15),
+`FOOTAGE_YTDLP_PATH` (`yt-dlp`).
 
 ## Known limitations
 
@@ -145,8 +179,15 @@ manifest `manifest.json`):
   default), then verified by re-reading the file.
 - Long videos are sampled adaptively (≤ 600 frames), so a
   hours-long source is analysed coarsely, not frame-by-frame.
-- Analysis is local-file only (downloaded Archive footage is a
-  local file by the time it is analysed); no TTS/speech use.
+- Analysis is local-file only (downloaded Archive and YouTube
+  footage is a local file by the time it is analysed); no
+  TTS/speech use.
 - Archive file availability varies per item: some items publish
   no playable video file, and very large files are skipped by the
-  size caps. YouTube downloads are not in scope.
+  size caps. YouTube downloads cover CC-licensed videos only;
+  a standard-licence video is never downloaded, and yt-dlp
+  cannot reach YouTube from a host whose egress proxy blocks
+  it (this VM) — live YouTube downloads are verified on the
+  deploy host. Pexels / Pixabay downloads are direct MP4 links
+  and need their API keys configured at download time; live
+  stock downloads are likewise verified on the deploy host.

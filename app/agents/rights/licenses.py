@@ -104,6 +104,30 @@ def _catalogue() -> dict[str, LicenceInfo]:
         attribution_required=False, is_licence_grant=False,
         conditions=["this is a mark, not a licence — public-domain status must be confirmed by a human"],
     )
+    # Stock-library platform licences (added after Prompt 12, for the
+    # Pexels / Pixabay providers). Both platforms release every video
+    # under their platform licence, which permits free commercial use,
+    # modification and redistribution without attribution — so they
+    # are real licence grants and can be approved on licence evidence
+    # alone, exactly like CC BY. The providers record the platform
+    # licence URL (the published terms); neither API publishes a
+    # per-video licence field. Pixabay's API terms ask users to credit
+    # Pixabay when displaying search results — a courtesy request,
+    # not a licence condition, so attribution is not required.
+    out["pexels-license"] = LicenceInfo(
+        key="pexels-license", name="Pexels License",
+        url="https://www.pexels.com/license/",
+        commercial_use=True, modification=True, redistribution=True,
+        attribution_required=False,
+        conditions=["attribution not required, but appreciated"],
+    )
+    out["pixabay-license"] = LicenceInfo(
+        key="pixabay-license", name="Pixabay Content License",
+        url="https://pixabay.com/service/license/",
+        commercial_use=True, modification=True, redistribution=True,
+        attribution_required=False,
+        conditions=["attribution not required; Pixabay asks API users to credit Pixabay when displaying search results"],
+    )
     return out
 
 
@@ -124,6 +148,12 @@ _CC_TEXT_RE = re.compile(
     r"\bcc[\s\-]?(by(?:[\s\-]?nc)?(?:[\s\-]?nd)?(?:[\s\-]?sa)?)[\s\-]?(\d+\.\d+)?\b", re.IGNORECASE)
 _CC0_RE = re.compile(r"\bcc0\b|publicdomain/zero", re.IGNORECASE)
 _PDM_RE = re.compile(r"publicdomain/mark|public\s+domain\s+mark", re.IGNORECASE)
+# Stock-library platform licences: the provider records the platform
+# licence URL (e.g. https://www.pexels.com/license/), so match the
+# platform name in the string. Checked after the CC rules — a CC URL
+# never contains "pexels" or "pixabay".
+_PEXELS_RE = re.compile(r"pexels", re.IGNORECASE)
+_PIXABAY_RE = re.compile(r"pixabay", re.IGNORECASE)
 
 
 def _normalise_variant(raw: str) -> str:
@@ -172,6 +202,10 @@ def parse_licence(raw: str | None) -> LicenceInfo | None:
         # A CC licence variant/version we do not catalogue: known
         # family, unknown exact terms — do not guess its permissions.
         return None
+    if _PEXELS_RE.search(text):
+        return CATALOGUE["pexels-license"]
+    if _PIXABAY_RE.search(text):
+        return CATALOGUE["pixabay-license"]
     return None
 
 

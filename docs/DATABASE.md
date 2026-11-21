@@ -60,3 +60,35 @@ Local testing: SQLite via `Base.metadata.create_all()`.
   `analyzed_moments(job_id, candidate_video_id)`,
   `agent_execution_logs(job_id, agent_name)`, plus per-table
   job indexes on footage, rendered videos and QA reports.
+
+## SQLite concurrency (2026-11-21 lock fix)
+
+The live Render database locked ("database is locked") while a
+long Archive footage download ran: the Video Intelligence
+session held the first candidate's uncommitted writes across
+the second candidate's slow download (one commit at the very
+end), and every other write — new jobs, cancels, even recording
+the failure — failed. Two changes, both in
+`app/database/session.py` (`make_engine`, so every engine gets
+them — `init_db.py`, `migrate_all.py`, uvicorn startup):
+
+* **WAL mode** (`PRAGMA journal_mode=WAL`, stored in the file)
+  — readers never block writers and writers never block
+  readers.
+* **Busy timeout 30 s** (`PRAGMA busy_timeout=30000`,
+  per-connection) — a writer that still has to wait retries
+  instead of failing instantly.
+
+And a transaction rule every service follows: **no transaction
+spans network I/O or a long render/download**. Video
+Intelligence commits after each candidate; Rights commits
+after each candidate; the footage downloader streams the file
+first (no session open) and records `storage_path` in a short
+session that commits immediately; Production renders with no
+session open at all. The rule is proven by
+`test_download_in_progress_does_not_block_other_writes`
+(two candidates, second download slow, a job created
+mid-download) and `test_sqlite_engine_uses_wal_and_busy_timeout`
+in `tests/test_footage_download.py`. Backups use the sqlite3
+online-backup API, which is WAL-safe — never copy the live
+.db file by hand.
