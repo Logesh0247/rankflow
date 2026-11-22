@@ -265,6 +265,25 @@ def test_concurrent_jobs_are_isolated():
 
 
 # ---------------------------------------------------------------- API
+def _wait_for_terminal(client, job_id: str, timeout: float = 60.0) -> dict:
+    """Poll GET /jobs/{id} until the job reaches a terminal
+    status. Runs are asynchronous since the 2026-11-21
+    health-check fix (POST /run returns 202 immediately)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    while time.monotonic() < deadline:
+        got = client.get(f"/jobs/{job_id}")
+        assert got.status_code == 200, got.text
+        last = got.json()
+        if last["status"] in ("awaiting_approval", "approved",
+                              "failed", "cancelled"):
+            return last
+        time.sleep(0.2)
+    raise AssertionError(f"job {job_id} did not finish in {timeout}s: {last}")
+
+
 def test_api_agents_and_run_with_test_doubles(engine):
     from fastapi.testclient import TestClient
     from sqlalchemy.orm import sessionmaker
@@ -313,19 +332,23 @@ def test_api_agents_and_run_with_test_doubles(engine):
         # intelligence. The run fails the job honestly because no
         # approved candidate has a local footage file (downloading
         # is not configured) — the video agent runs and reports
-        # that, rather than stopping with 501.
+        # that, rather than stopping with 501. POST /run answers
+        # 202 immediately (background run) and the job is polled
+        # to its terminal state.
         plain = client.post(f"/jobs/{job_id}/run")
-        assert plain.status_code == 200, plain.text
-        assert plain.json()["status"] == "failed"
-        assert "VIDEO_ANALYSIS" in (plain.json()["error_message"] or "")
+        assert plain.status_code == 202, plain.text
+        finished = _wait_for_terminal(client, job_id)
+        assert finished["status"] == "failed"
+        assert "VIDEO_ANALYSIS" in (finished["error_message"] or "")
 
         # A failed job cannot be re-run, so the test-double run uses
         # a fresh job.
         created_td = client.post("/jobs", json={"topic": TOPIC})
         td_job_id = created_td.json()["id"]
         run = client.post(f"/jobs/{td_job_id}/run?use_test_doubles=true")
-        assert run.status_code == 200, run.text
-        assert run.json()["status"] == "awaiting_approval"
+        assert run.status_code == 202, run.text
+        finished_td = _wait_for_terminal(client, td_job_id)
+        assert finished_td["status"] == "awaiting_approval"
 
         history = client.get(f"/jobs/{td_job_id}/history")
         assert history.status_code == 200

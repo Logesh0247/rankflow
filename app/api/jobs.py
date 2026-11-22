@@ -7,24 +7,42 @@ picks it up. That is intentional, not a bug.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
-from app.database.session import get_session, init_db, make_engine
+from app.database.session import get_session, init_db
 from app.models.models import Job
 from app.schemas.schemas import JobCreate, JobRead
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-def _session() -> Session:
-    return get_session(make_engine())
+def _session() -> Iterator[Session]:
+    """One session per request, closed when the request ends.
+
+    This used to be a plain `Depends` returning a session that
+    nothing ever closed: with a fresh engine per request that
+    was invisible (the engine was thrown away with it), but
+    with the shared engine (2026-11-21 health-check fix) every
+    /jobs poll leaked a pooled connection until the pool
+    (5 + 10 overflow) was exhausted and requests failed with
+    "QueuePool limit reached, connection timed out". A yield
+    dependency makes FastAPI close the session after the
+    request, returning the connection to the pool.
+    """
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 @router.post("", response_model=JobRead, status_code=201)
 def create_job(payload: JobCreate, session: Session = Depends(_session)) -> JobRead:
-    init_db(make_engine())
+    init_db()
     job = Job(topic=payload.topic, requested_by=payload.requested_by, status="created")
     session.add(job)
     session.commit()
@@ -36,7 +54,7 @@ def create_job(payload: JobCreate, session: Session = Depends(_session)) -> JobR
 
 @router.get("", response_model=list[JobRead])
 def list_jobs(session: Session = Depends(_session)) -> list[JobRead]:
-    init_db(make_engine())
+    init_db()
     jobs = session.query(Job).order_by(Job.created_at.desc()).limit(100).all()
     return [JobRead(id=j.id, topic=j.topic, status=j.status, current_stage=j.current_stage,
                     requested_by=j.requested_by, error_message=j.error_message,

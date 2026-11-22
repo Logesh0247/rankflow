@@ -69,9 +69,26 @@ results, errors, execution metadata (duration, attempt, executor).
 
 ## What is NOT built
 
-- No Redis/Celery broker: runs are synchronous and in-process.
+- No Redis/Celery broker: runs are in-process, in a background
+  thread (2026-11-21 Render health-check fix — see below).
   No Postgres/Redis server exists in this environment (see
   `docs/ARCHITECTURE.md`); SQLite remains the local fallback.
+- Background runs (2026-11-21): `POST /jobs/{id}/run` and
+  `POST /jobs/{id}/resume` return 202 immediately and run the
+  job in a daemon thread (`app/orchestrator/runner.py`); the UI
+  polls `GET /jobs/{id}` every 4 s. A second run for a job that
+  is already running is refused with 409. This replaced the old
+  synchronous in-request run, which held the HTTP request open
+  for the whole (many-minute) job: while it ran, Render's 5 s
+  health check on `/health` timed out, Render restarted the
+  service mid-job, and the job was orphaned "running". Two
+  companions to that fix: all request paths share one cached
+  engine (`get_engine()` in `app/database/session.py`) instead
+  of opening a fresh connection pool per request against Neon,
+  and startup fails any job left "running" cleanly
+  (`JobService.fail_interrupted_jobs`, called from `main.py`)
+  so it can be resumed from its last checkpoint instead of
+  sitting "running" forever.
 - The migration in `scripts/migrate_002_add_current_stage.py` must
   be run once on any database created by Prompt 01, because
   `create_all()` does not add columns to existing tables.

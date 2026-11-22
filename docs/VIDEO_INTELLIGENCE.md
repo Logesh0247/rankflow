@@ -80,7 +80,14 @@ Download rules (all enforced, all honest):
   machine-readable `errorCode` (AGE_RESTRICTED, MEMBERS_ONLY,
   GEO_RESTRICTED, PRIVATE_VIDEO, DRM_PROTECTED,
   VIDEO_UNAVAILABLE, …) is a definitive failure and is never
-  retried with yt-dlp. When no key is set, or the Vid Kraken
+  retried with yt-dlp. A pre-job HTTP 401/403 is an account
+  rejection, not a video rejection — 401 is a missing/invalid
+  key, 403 is a used-up plan allowance (live incident
+  2026-11-21, job 348bbafa: 7 submit 403s, no clip ever
+  downloaded) — and is returned as a definitive failure naming
+  the cause (HTTP status + `code` from the `{"error", "code"}`
+  body + plain meaning) instead of silently falling back to
+  yt-dlp per candidate. When no key is set, or the Vid Kraken
   service fails / times out, yt-dlp is the fallback (`--format
   bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`,
   `--merge-output-format mp4`, `--max-filesize` enforces the

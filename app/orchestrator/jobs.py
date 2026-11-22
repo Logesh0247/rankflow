@@ -103,6 +103,29 @@ class JobService:
             session.refresh(job)
             return self._read(job)
 
+    def fail_interrupted_jobs(self, reason: str) -> int:
+        """Fail every job left in status "running" — i.e. a job
+        that was mid-run when the process died (Render restart,
+        deploy, crash). A "running" job can never finish on its
+        own: the thread that ran it is gone, and without this the
+        job sits "running" forever, orphaned, with no error and
+        no way forward. Failing it cleanly records the cause and
+        lets the user resume it from the last completed stage
+        (checkpoints survive — they are persisted log rows).
+        Returns how many jobs were failed. "created" jobs are
+        untouched: they never started, so there is nothing to
+        resume from and nothing was interrupted."""
+        with self._sessions() as session:
+            stuck = (session.query(Job)
+                     .filter(Job.status == "running").all())
+            for job in stuck:
+                job.current_stage = WorkflowStage.FAILED.value
+                job.status = "failed"
+                job.error_message = reason
+                job.updated_at = _utcnow()
+            session.commit()
+            return len(stuck)
+
     def cancel_job(self, job_id: str) -> JobRead:
         """Cancel a job that is not already terminal. A job that
         already COMPLETED (awaiting_approval), FAILED or CANCELLED

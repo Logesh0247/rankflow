@@ -17,7 +17,7 @@ from app.agents.rights.evidence import ManualEvidence
 from app.agents.rights.service import RightsService
 from app.core.config import get_settings
 from app.core.errors import RankflowError, ValidationError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.schemas.schemas import (
     AttributionRead,
     RightsReviewRequest,
@@ -28,7 +28,7 @@ router = APIRouter(tags=["rights"])
 
 
 def _service() -> RightsService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return RightsService(engine, get_settings())
 

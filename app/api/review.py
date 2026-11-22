@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 
 from app.core.config import get_settings
 from app.core.errors import RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.orchestrator.engine import WorkflowEngine
 from app.orchestrator.jobs import JobService
 from app.orchestrator.registry import build_default_registry
@@ -28,14 +28,14 @@ router = APIRouter(tags=["review"])
 
 
 def _engine() -> WorkflowEngine:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return WorkflowEngine(engine, get_settings(), build_default_registry(engine))
 
 
 @router.post("/jobs/{job_id}/approve", response_model=JobRead)
 def approve_job(job_id: str) -> JobRead:
-    service = JobService(make_engine())
+    service = JobService(get_engine())
     try:
         return service.approve_job(job_id)
     except RankflowError as exc:

@@ -41,9 +41,25 @@ class RedactSecretsFilter(logging.Filter):
         if isinstance(record.msg, str):
             record.msg = _redact(record.msg)
         if record.args:
+            # `record.args` may be a tuple (positional formatting)
+            # OR a dict (mapping formatting, e.g. "%(key)s" % {...}
+            # or a single dict passed as one "%s" argument). The
+            # old code iterated `record.args` unconditionally, so
+            # a dict argument was silently replaced by a tuple of
+            # its KEYS — and a "%s" message then raised
+            # "TypeError: not all arguments converted during
+            # string formatting" at emit time (live incident:
+            # main.py logging report["checks"], a dict, at every
+            # startup). Redact dicts by value, tuples by element,
+            # and leave anything else alone.
             try:
-                record.args = tuple(
-                    _redact(a) if isinstance(a, str) else a for a in record.args)
+                if isinstance(record.args, dict):
+                    record.args = {k: (_redact(v) if isinstance(v, str) else v)
+                                   for k, v in record.args.items()}
+                else:
+                    record.args = tuple(
+                        _redact(a) if isinstance(a, str) else a
+                        for a in record.args)
             except TypeError:
                 pass
         return True

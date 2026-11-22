@@ -14,7 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
-from app.database.session import make_engine
+from app.database.session import get_engine
 from app.orchestrator.registry import build_default_registry
 from app.utils.paths import which_ffmpeg
 
@@ -80,7 +80,7 @@ def settings_status() -> SettingsStatus:
         free_gb = None
     agents: list[dict] = []
     try:
-        for descriptor in build_default_registry(make_engine()).list():
+        for descriptor in build_default_registry(get_engine()).list():
             agents.append({"id": descriptor.agent_id, "name": descriptor.name,
                            "status": descriptor.status})
     except Exception:

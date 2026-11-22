@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.orm import sessionmaker
 
 from app.core.errors import RankflowError
-from app.database.session import make_engine
+from app.database.session import get_engine
 from app.models.models import CandidateVideo
 from app.schemas.schemas import CandidateVideoRead
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["research"])
 
 @router.get("/jobs/{job_id}/candidates", response_model=list[CandidateVideoRead])
 def list_candidates(job_id: str) -> list[CandidateVideoRead]:
-    engine = make_engine()
+    engine = get_engine()
     sessions = sessionmaker(bind=engine)
     with sessions() as session:
         rows = (session.query(CandidateVideo)

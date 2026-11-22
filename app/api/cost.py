@@ -14,14 +14,14 @@ from sqlalchemy.engine import Engine
 
 from app.core.cost import CostService, JobCostSummary
 from app.core.errors import RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.orchestrator.jobs import JobService
 
 router = APIRouter(tags=["cost"])
 
 
 def _service() -> CostService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return CostService(engine)
 
@@ -29,7 +29,7 @@ def _service() -> CostService:
 @router.get("/jobs/{job_id}/cost", response_model=JobCostSummary)
 def get_job_cost(job_id: str) -> JobCostSummary:
     try:
-        JobService(make_engine()).get_job(job_id)
+        JobService(get_engine()).get_job(job_id)
         return _service().job_cost(job_id)
     except RankflowError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

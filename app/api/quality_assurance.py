@@ -16,13 +16,13 @@ from sqlalchemy.engine import Engine
 from app.agents.quality_assurance.service import QAReportFull, QAService
 from app.core.config import get_settings
 from app.core.errors import ExternalServiceError, RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 
 router = APIRouter(tags=["quality_assurance"])
 
 
 def _service() -> QAService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return QAService(engine, get_settings())
 

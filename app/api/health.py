@@ -5,7 +5,7 @@ from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.core.notifications import recent_notifications
-from app.database.session import check_db, make_engine
+from app.database.session import check_db, get_engine
 from app.schemas.schemas import HealthResponse
 from app.storage.validate import validate_storage
 from app.utils.paths import which_ffmpeg
@@ -35,7 +35,7 @@ def health_detailed() -> dict:
     settings = get_settings()
     base = health()
     try:
-        storage = validate_storage(make_engine(), settings)
+        storage = validate_storage(get_engine(), settings)
     except Exception as exc:  # noqa: BLE001 — report, don't fail the read
         storage = {"ok": False, "issues": [f"storage validation failed: {exc}"], "checks": {}}
     return {

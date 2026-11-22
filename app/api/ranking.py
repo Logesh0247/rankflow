@@ -15,14 +15,14 @@ from sqlalchemy.engine import Engine
 from app.agents.ranking.service import RankingService
 from app.core.config import get_settings
 from app.core.errors import RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.schemas.schemas import RankingResultRead
 
 router = APIRouter(tags=["ranking"])
 
 
 def _service() -> RankingService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return RankingService(engine, get_settings())
 

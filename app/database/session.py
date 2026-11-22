@@ -68,16 +68,44 @@ def make_engine(settings: Settings | None = None) -> Engine:
     return create_engine(url, pool_pre_ping=True)
 
 
+# Shared engine cache (2026-11-21 Render health-check fix): every
+# request path used to call `make_engine()` and throw the engine
+# away, so each /health check, job list and agent call opened a
+# brand-new connection pool against Neon — and never disposed it.
+# On the free tier that churn is what made /health slow enough
+# for Render's 5 s health check to time out while a job ran
+# (a cold pooled connection must wake Neon's suspended compute),
+# and Render restarted the service. One engine per database URL,
+# shared by all request paths, keeps a warm pooled connection so
+# /health's SELECT 1 stays fast. `make_engine()` is kept for
+# callers that genuinely need a fresh engine (tests, migrations,
+# scripts) — request code must use `get_engine()`.
+_ENGINES: dict[str, Engine] = {}
+
+
+def get_engine(settings: Settings | None = None) -> Engine:
+    """The shared engine for `settings.database_url`, created once
+    and reused. Keyed by URL so tests with different temp
+    databases never share an engine."""
+    settings = settings or get_settings()
+    url = settings.database_url
+    engine = _ENGINES.get(url)
+    if engine is None:
+        engine = make_engine(settings)
+        _ENGINES[url] = engine
+    return engine
+
+
 def init_db(engine: Engine | None = None, settings: Settings | None = None) -> Engine:
     """Create all tables. Safe to call repeatedly (create_all is idempotent)."""
-    engine = engine or make_engine(settings)
+    engine = engine or get_engine(settings)
     Base.metadata.create_all(engine)
     return engine
 
 
 def check_db(engine: Engine | None = None) -> bool:
     """Return True only if a trivial query succeeds."""
-    engine = engine or make_engine()
+    engine = engine or get_engine()
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -87,5 +115,5 @@ def check_db(engine: Engine | None = None) -> bool:
 
 
 def get_session(engine: Engine | None = None) -> Session:
-    engine = engine or make_engine()
+    engine = engine or get_engine()
     return sessionmaker(bind=engine)()

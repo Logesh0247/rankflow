@@ -47,17 +47,41 @@ logger = get_logger("startup")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # 2026-11-21 Render health-check fix: a job left "running"
+    # was mid-run when the process died (Render restart / deploy
+    # / crash) — its thread is gone, so it can never finish.
+    # Fail it cleanly with the cause instead of leaving it
+    # orphaned "running" forever; checkpoints survive, so the
+    # user can resume it from the last completed stage.
+    try:
+        from app.database.session import get_engine
+        from app.orchestrator.jobs import JobService
+        interrupted = JobService(get_engine()).fail_interrupted_jobs(
+            "interrupted by a service restart — resume to continue "
+            "from the last completed stage")
+        if interrupted:
+            logger.warning("failed %d job(s) interrupted by a restart", interrupted)
+    except Exception as exc:  # noqa: BLE001 — startup must not fail on this
+        logger.warning("interrupted-job cleanup could not run: %s", exc)
     # Prompt 12, Phase 4: validate storage at startup — warn, never
     # refuse to boot (a missing render file must not take the API down).
     try:
-        from app.database.session import make_engine
+        from app.database.session import get_engine
         from app.storage.validate import validate_storage
-        report = validate_storage(make_engine(), settings)
+        report = validate_storage(get_engine(), settings)
         if not report["ok"]:
             for issue in report["issues"]:
                 logger.warning("storage validation: %s", issue)
         else:
-            logger.info("storage validation ok: %s", report["checks"])
+            # Format the checks into the message: passing the
+            # checks dict itself as a logging argument used to
+            # crash at emit time (see RedactSecretsFilter — a
+            # dict arg was replaced by a tuple of its keys, and
+            # "%s" % (six keys) raises TypeError).
+            checks = report["checks"]
+            summary = ", ".join(f"{key}={value}" for key, value in checks.items()) \
+                if isinstance(checks, dict) else str(checks)
+            logger.info("storage validation ok: %s", summary)
     except Exception as exc:  # noqa: BLE001 — startup must not fail on this
         logger.warning("storage validation could not run: %s", exc)
     yield

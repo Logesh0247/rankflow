@@ -19,14 +19,14 @@ from sqlalchemy.engine import Engine
 from app.agents.production.service import ProductionReport, ProductionService
 from app.core.config import get_settings
 from app.core.errors import RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.schemas.schemas import RenderedVideoRead
 
 router = APIRouter(tags=["production"])
 
 
 def _service() -> ProductionService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return ProductionService(engine, get_settings())
 

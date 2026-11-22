@@ -123,13 +123,17 @@ def _approve(engine, job_id, candidate_id):
 
 # ------------------------------------------------------------------ Vid Kraken mock
 def _vidkraken_handler(content: bytes, *, poll_states=None,
-                       submit_status=200, job_id="vk-123"):
+                       submit_status=200, submit_body=None,
+                       poll_status=200, poll_body=None, job_id="vk-123"):
     """MockTransport handler for the Vid Kraken API + CDN file.
 
     `poll_states` is the sequence of poll responses (each a dict
     with at least "status"); the last one repeats. Records every
     request so tests can prove the Bearer header, the 1080 format
-    and the Idempotency-Key were actually sent.
+    and the Idempotency-Key were actually sent. `submit_body` /
+    `poll_body` are the JSON bodies returned with a non-200
+    submit / poll status (a real Vid Kraken rejection carries
+    {"error", "code"}); when None the body is plain b"error".
     """
     calls = {"submit": [], "poll": [], "file": 0}
     states = list(poll_states) if poll_states is not None else [
@@ -147,11 +151,17 @@ def _vidkraken_handler(content: bytes, *, poll_states=None,
                     "json": json.loads(request.content.decode()),
                 })
                 if submit_status != 200:
+                    if submit_body is not None:
+                        return httpx.Response(submit_status, json=submit_body)
                     return httpx.Response(submit_status, content=b"error")
                 return httpx.Response(200, json={
                     "jobId": job_id, "title": "Funny Cat Fails",
                     "duration": 30, "status": "IN_QUEUE"})
             calls["poll"].append(dict(request.headers))
+            if poll_status != 200:
+                if poll_body is not None:
+                    return httpx.Response(poll_status, json=poll_body)
+                return httpx.Response(poll_status, content=b"error")
             state = states.pop(0) if len(states) > 1 else states[0]
             return httpx.Response(200, json=state)
         if host == "cdn.example.invalid":
@@ -281,6 +291,7 @@ def test_vidkraken_error_code_is_a_failure_not_a_success(engine, tmp_path):
 @pytest.mark.parametrize("error_code", [
     "MEMBERS_ONLY", "GEO_RESTRICTED", "PRIVATE_VIDEO",
     "DRM_PROTECTED", "VIDEO_UNAVAILABLE",
+    "PAYMENT_REQUIRED", "COPYRIGHTED_MUSIC", "NO_DOWNLOAD_OPT_OUT",
 ])
 def test_vidkraken_other_error_codes_are_failures(engine, tmp_path, error_code):
     job = _new_job(engine)
@@ -295,6 +306,104 @@ def test_vidkraken_other_error_codes_are_failures(engine, tmp_path, error_code):
     assert result.status == "failed"
     assert error_code in result.reason
     assert runner.calls == []
+
+
+def test_vidkraken_submit_403_limit_reached_is_definitive(engine, tmp_path):
+    """Live incident 2026-11-21 (job 348bbafa): Vid Kraken
+    returned 403 on every submit and no clip was ever
+    downloaded. Per Vid Kraken's own error-code docs a 403 is a
+    used-up plan allowance — an account state, not a property
+    of one video — so it is a definitive failure naming the
+    cause (status + LIMIT_REACHED + allowance), and yt-dlp is
+    NOT tried: it cannot help from Render either, and falling
+    back per candidate only hid the real cause for minutes."""
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    handler = _vidkraken_handler(
+        b"", submit_status=403,
+        submit_body={"error": "plan allowance used up",
+                     "code": "LIMIT_REACHED"})
+    runner = _StubRunner(b"")
+    downloader = _downloader(handler, runner)
+    result = _run_download(engine, downloader, job.id, candidate_id)
+    assert result.status == "failed"
+    assert "403" in result.reason and "LIMIT_REACHED" in result.reason
+    assert "allowance" in result.reason
+    assert runner.calls == [], "yt-dlp must not retry an account rejection"
+
+
+def test_vidkraken_submit_401_invalid_key_is_definitive(engine, tmp_path):
+    """A 401 is a missing/invalid key (not a used-up allowance):
+    definitive, naming the key, no yt-dlp retry."""
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    handler = _vidkraken_handler(
+        b"", submit_status=401,
+        submit_body={"error": "invalid api key", "code": "UNAUTHORIZED"})
+    runner = _StubRunner(b"")
+    downloader = _downloader(handler, runner)
+    result = _run_download(engine, downloader, job.id, candidate_id)
+    assert result.status == "failed"
+    assert "401" in result.reason and "UNAUTHORIZED" in result.reason
+    assert "API key" in result.reason
+    assert runner.calls == []
+
+
+def test_vidkraken_submit_403_non_json_body_is_definitive(engine, tmp_path):
+    """A 403 with a non-JSON error body still fails definitively
+    with the status named — parsing the body must never raise."""
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    handler = _vidkraken_handler(b"", submit_status=403)
+    runner = _StubRunner(b"")
+    downloader = _downloader(handler, runner)
+    result = _run_download(engine, downloader, job.id, candidate_id)
+    assert result.status == "failed"
+    assert "403" in result.reason and "allowance" in result.reason
+    assert runner.calls == []
+
+
+def test_vidkraken_poll_403_is_definitive(engine, tmp_path):
+    """A 403 on poll (key revoked / allowance used up mid-job)
+    is the same account rejection as a 403 on submit."""
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    handler = _vidkraken_handler(
+        b"", poll_status=403,
+        poll_body={"error": "plan allowance used up",
+                   "code": "LIMIT_REACHED"})
+    runner = _StubRunner(b"")
+    downloader = _downloader(handler, runner)
+    result = _run_download(engine, downloader, job.id, candidate_id)
+    assert result.status == "failed"
+    assert "403" in result.reason and "LIMIT_REACHED" in result.reason
+    assert runner.calls == []
+
+
+def test_vidkraken_network_error_falls_back_to_ytdlp(engine, tmp_path):
+    """A FAILED job with NETWORK_ERROR is transient (Vid Kraken's
+    docs: the only code worth retrying) — yt-dlp is the retry."""
+    content = _write_footage(tmp_path / "clip.mp4").read_bytes()
+    job = _new_job(engine)
+    candidate_id = _seed_candidate(engine, job.id, "cc-vid-1",
+                                   licence=_cc_url())
+    _approve(engine, job.id, candidate_id)
+    handler = _vidkraken_handler(content, poll_states=[
+        {"status": "FAILED", "errorCode": "NETWORK_ERROR"}])
+    runner = _StubRunner(content)
+    downloader = _downloader(handler, runner)
+    result = _run_download(engine, downloader, job.id, candidate_id)
+    assert result.status == "downloaded"
+    assert result.vidkraken_job_id is None
+    assert len(runner.calls) == 1
 
 
 def test_vidkraken_no_key_falls_back_to_ytdlp(engine, tmp_path):

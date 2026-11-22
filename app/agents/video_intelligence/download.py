@@ -114,7 +114,10 @@ from app.agents.rights.gate import latest_evidence, require_approved
 from app.agents.video_intelligence.probe import probe_video
 from app.core.config import Settings, get_settings
 from app.core.errors import StorageError, ValidationError
+from app.core.logging import get_logger
 from app.core.security import safe_join
+
+logger = get_logger("video_intelligence.download")
 from app.database.session import make_engine
 from app.models.models import ApprovedFootage, CandidateVideo, Source
 from app.storage.local import get_storage
@@ -144,7 +147,13 @@ _YT_PLAYER_CLIENTS = ("web", "android", "ios")
 # errorCode (AGE_RESTRICTED, MEMBERS_ONLY, GEO_RESTRICTED,
 # PRIVATE_VIDEO, DRM_PROTECTED, VIDEO_UNAVAILABLE, VIDEO_NOT_FOUND,
 # ...). Only NETWORK_ERROR is worth resubmitting; the rest are
-# definitive rejections of that video. The API key is sent only to
+# definitive rejections of that video. A pre-job HTTP 401/403 is
+# an account rejection, not a video rejection — 401 is a missing
+# or invalid key, 403 is a used-up plan allowance (live incident
+# 2026-11-21: 7 submit 403s, no clip downloaded) — and is
+# returned as a definitive failure naming the cause, with the
+# {"error", "code"} body parsed, instead of silently falling
+# back to yt-dlp per candidate. The API key is sent only to
 # vidkraken.com, never to the file host (the file is streamed with
 # a fresh unauthenticated client). Use only with content the user
 # has the right to download — Vid Kraken never bypasses Rights.
@@ -152,12 +161,29 @@ VIDKRAKEN_BASE_URL = "https://vidkraken.com"
 VIDKRAKEN_FORMAT = "1080"
 # Definitive Vid Kraken job failures: the video itself cannot be
 # downloaded, so yt-dlp must not be tried to get around them.
+# (Full list: vidkraken.com/blog/youtube-download-api-error-codes —
+# every code there except NETWORK_ERROR is final for that video.
+# FILE_TOO_LARGE / FORMAT_UNAVAILABLE are deliberately NOT here:
+# yt-dlp may still fetch the video at another quality.)
 _VIDKRAKEN_DEFINITIVE_ERRORS = frozenset({
     "AGE_RESTRICTED", "MEMBERS_ONLY", "GEO_RESTRICTED",
     "PRIVATE_VIDEO", "DRM_PROTECTED", "VIDEO_UNAVAILABLE",
     "VIDEO_NOT_FOUND", "VIDEO_PROCESSING", "VIDEO_PREMIERE",
     "LIVE_STREAM_IN_PROGRESS", "NOT_FOUND",
+    "PAYMENT_REQUIRED", "COPYRIGHTED_MUSIC", "NO_DOWNLOAD_OPT_OUT",
 })
+
+# Plain-language meanings of Vid Kraken's pre-job HTTP rejections
+# (same docs page): 401 is the key, 403 is the plan allowance.
+# A 401/403 is an account state, not a property of one video, so
+# it is handled as a definitive failure (see
+# _vidkraken_account_failure) rather than a silent yt-dlp fallback.
+_VIDKRAKEN_HTTP_MEANINGS = {
+    401: ("API key missing or invalid — check VIDKRAKEN_API_KEY "
+          "on Render (Authorization: Bearer header)"),
+    403: ("plan allowance used up — check the Vid Kraken dashboard "
+          "/ billing (free trial: 10 downloads)"),
+}
 
 # Substrings (lowercased) of yt-dlp stderr that mean "YouTube is
 # demanding a signed-in browser" — the error seen live on
@@ -599,6 +625,54 @@ class FootageDownloader:
         return {"Authorization": f"Bearer {self.settings.vidkraken_api_key}",
                 "Accept": "application/json"}
 
+    def _vidkraken_account_failure(
+            self, exc: httpx.HTTPStatusError, candidate_id: str,
+            url: str) -> FootageDownload | None:
+        """A 401/403 from Vid Kraken, as a definitive failure — or
+        None when the status is not an account rejection.
+
+        Per Vid Kraken's own error-code docs
+        (vidkraken.com/blog/youtube-download-api-error-codes),
+        401 means the API key is missing or invalid and 403 means
+        the plan's bandwidth/request allowance is used up. Either
+        way this is an account state, not a property of one video:
+        every candidate in the job would hit the same wall, and
+        yt-dlp cannot help from Render either (YouTube demands a
+        signed-in browser from this server — proven live). So the
+        failure is returned directly, with the HTTP status, the
+        machine-readable `code` from the `{"error", "code"}` body
+        (e.g. UNAUTHORIZED / LIMIT_REACHED) and the plain-language
+        meaning, instead of silently falling back to yt-dlp per
+        candidate and failing minutes later with the misleading
+        "no usable moments". The live incident (2026-11-21, job
+        348bbafa): 7 submit 403s, no clip downloaded, and the
+        swallowed error body meant nobody could tell a used-up
+        trial from a wrong key — a 401 would have meant the key,
+        a 403 means the allowance. Never logs the key.
+        """
+        status = exc.response.status_code
+        if status not in _VIDKRAKEN_HTTP_MEANINGS:
+            return None
+        code = ""
+        message = ""
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict):
+                code = str(body.get("code") or "")
+                message = str(body.get("error") or body.get("message") or "")
+        except Exception:  # noqa: BLE001 — a non-JSON error body still names the status
+            pass
+        detail = f"HTTP {status}"
+        if code:
+            detail += f" {code}"
+        if message and message != code:
+            detail += f": {message}"
+        reason = (f"Vid Kraken rejected the download ({detail}) — "
+                  f"{_VIDKRAKEN_HTTP_MEANINGS[status]}")
+        logger.warning("Vid Kraken account failure for %s: %s", url, reason)
+        return FootageDownload(candidate_video_id=candidate_id,
+                               status="failed", source_url=url, reason=reason)
+
     def _try_vidkraken(self, job_id: str, candidate_id: str,
                        video_id: str,
                        budget_bytes: int) -> FootageDownload | None:
@@ -606,22 +680,29 @@ class FootageDownloader:
 
         Returns None when Vid Kraken was NOT attempted or its
         service failed in a way yt-dlp may still succeed — no
-        key configured, submit HTTP/network error, poll HTTP
-        error, or poll timeout — and the caller then falls back
-        to yt-dlp. Returns a FootageDownload for a definitive
-        outcome: downloaded, or the Vid Kraken job FAILED with a
-        machine-readable errorCode (AGE_RESTRICTED, MEMBERS_ONLY,
-        GEO_RESTRICTED, PRIVATE_VIDEO, DRM_PROTECTED,
-        VIDEO_UNAVAILABLE, …). A definitive failure is never
-        retried with yt-dlp: yt-dlp cannot download an
-        age-restricted / private / members-only video either,
-        and trying would be an attempt to get around the
-        restriction. No database session is open during this
-        call: the API is polled and the file streamed first; the
-        caller records it afterwards in a short session. The
-        API key is sent only to vidkraken.com, never to the file
-        host. The submit carries an Idempotency-Key so a
-        retried submit cannot start (and bill) a second job.
+        key configured, submit/poll HTTP error other than
+        401/403, network error, poll timeout, or a FAILED job
+        with a non-definitive errorCode (NETWORK_ERROR / unknown)
+        — and the caller then falls back to yt-dlp. Returns a
+        FootageDownload for a definitive outcome: downloaded; a
+        Vid Kraken job FAILED with a machine-readable errorCode
+        in _VIDKRAKEN_DEFINITIVE_ERRORS (AGE_RESTRICTED,
+        MEMBERS_ONLY, GEO_RESTRICTED, PRIVATE_VIDEO,
+        DRM_PROTECTED, VIDEO_UNAVAILABLE, …); or a 401/403
+        account rejection on submit/poll (bad key / plan
+        allowance used up — see _vidkraken_account_failure).
+        A definitive failure is never retried with yt-dlp:
+        yt-dlp cannot download an age-restricted / private /
+        members-only video either, and trying would be an
+        attempt to get around the restriction; and for a 401/403
+        the account cannot download anything at all, while
+        yt-dlp is blocked from Render anyway. No database
+        session is open during this call: the API is polled and
+        the file streamed first; the caller records it
+        afterwards in a short session. The API key is sent only
+        to vidkraken.com, never to the file host. The submit
+        carries an Idempotency-Key so a retried submit cannot
+        start (and bill) a second job.
         """
         if not self.settings.vidkraken_api_key:
             return None
@@ -639,6 +720,20 @@ class FootageDownloader:
                     headers=headers)
                 response.raise_for_status()
                 submitted = response.json()
+        except httpx.HTTPStatusError as exc:
+            # A 401/403 is an account rejection (bad key / allowance
+            # used up) — definitive, with the reason naming it.
+            # Any other HTTP error (429, 5xx) is a service failure:
+            # fall back to yt-dlp, but log the status instead of
+            # swallowing it silently as before.
+            account_failure = self._vidkraken_account_failure(
+                exc, candidate_id, url)
+            if account_failure is not None:
+                return account_failure
+            logger.warning("Vid Kraken submit failed: HTTP %s — "
+                           "falling back to yt-dlp",
+                           exc.response.status_code)
+            return None
         except Exception:  # noqa: BLE001 — service failure: fall back to yt-dlp
             return None
         if not isinstance(submitted, dict):
@@ -672,6 +767,15 @@ class FootageDownloader:
                                           headers=self._vidkraken_headers())
                     response.raise_for_status()
                     state = response.json()
+            except httpx.HTTPStatusError as exc:
+                account_failure = self._vidkraken_account_failure(
+                    exc, candidate_id, url)
+                if account_failure is not None:
+                    return account_failure
+                logger.warning("Vid Kraken poll failed: HTTP %s — "
+                               "falling back to yt-dlp",
+                               exc.response.status_code)
+                return None
             except Exception:  # noqa: BLE001 — poll failure: fall back to yt-dlp
                 return None
             if not isinstance(state, dict):
@@ -692,6 +796,17 @@ class FootageDownloader:
             if status == "FAILED":
                 error_code = str(state.get("errorCode")
                                  or state.get("error_code") or "FAILED")
+                if error_code not in _VIDKRAKEN_DEFINITIVE_ERRORS:
+                    # NETWORK_ERROR, a null code, or an unknown code:
+                    # per Vid Kraken's docs the failure was on their
+                    # side and is worth retrying — fall back to
+                    # yt-dlp (the retry) instead of failing the
+                    # video for a transient cause.
+                    logger.warning(
+                        "Vid Kraken job %s FAILED with non-definitive "
+                        "code %s — falling back to yt-dlp",
+                        job_id_vk, error_code)
+                    return None
                 message = str(state.get("message") or state.get("error") or "")
                 reason = f"Vid Kraken download failed: {error_code}"
                 if message and message != error_code:

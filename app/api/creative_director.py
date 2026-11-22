@@ -16,14 +16,14 @@ from sqlalchemy.engine import Engine
 from app.agents.creative_director.service import CreativeDirectorService, CreativeReport
 from app.core.config import get_settings
 from app.core.errors import RankflowError
-from app.database.session import init_db, make_engine
+from app.database.session import get_engine, init_db
 from app.schemas.schemas import EditInstructionRead, NarrationRead, StoryboardRead
 
 router = APIRouter(tags=["creative_director"])
 
 
 def _service() -> CreativeDirectorService:
-    engine: Engine = make_engine()
+    engine: Engine = get_engine()
     init_db(engine)
     return CreativeDirectorService(engine, get_settings())
 
